@@ -896,13 +896,75 @@ Lectura:
 
 ### 7.5 Siguiente paso
 
-Pendiente de definir. Candidatos que salen de esta sección:
+**Plan.** La Sección 7 dejó dos preguntas abiertas: (a) si la IA pierde ahorro frente al
+reactivo por falta de información sobre la duración de los incidentes (Sección 7.4), y
+(b) si HistGB + línea/tramo rutea mejor que el modelo fijo (Sección 7.1). Ambas se
+responden con el mismo experimento de 30 semillas, así que se atienden juntas. Las
+limitaciones #4 y #5 de la Sección 3 quedan para la fase siguiente (punto 5).
 
-- Probar un aviso de duración estimada del cierre (en el simulador, una estimación ruidosa
-  de `duracion` visible en t) para medir cuánto vale esa información para el ruteo.
-- Repetir el ruteo de 30 semillas con HistGB + línea/tramo (mejor RMSE con evento) para
-  cerrar la decisión abierta de la Sección 7.1.
-- Atender las limitaciones #4 (horizonte sub-horario) y #5 (perfiles O-D) de la Sección 3.
+1. **Aviso de tiempo estimado de restablecimiento** (`simulador_congestion.py`). Cuando
+   hay un incidente o una falla, el STC anuncia un tiempo estimado de restablecimiento;
+   el simulador tiene la duración real pero no la expone. Se agregará la columna
+   `horas_restantes_anunciadas` (−1 sin evento; la lluvia no la trae):
+   - Restante real en t = `hora_inicio + duracion − hora − 1` (0 = el evento termina al
+     cerrar esta hora).
+   - Aviso = `round(restante_real × exp(ε))`, con `ε ~ N(0, σ)` y mínimo 0. `σ` se
+     controla con un argumento `--ruido-aviso` (0 = aviso perfecto).
+   - El ruido se sortea con un generador aparte (`default_rng(semilla + 1_000_000)`)
+     para no alterar la secuencia de eventos: con la misma semilla, el dataset debe ser
+     idéntico al de la Sección 7 salvo la columna nueva. Se verificará comparando las
+     demás columnas.
+2. **Feature en el entrenador** (`entrenador_anticipatorio.py`). `horas_restantes_anunciadas`
+   entra en `FEATURES_BASE` solo si está en el dataset, para que los datasets de la
+   Sección 7 sigan siendo entrenables. Se agregará un argumento `--configuracion` que
+   sobrescriba `MODELO_ELEGIDO` (p. ej. `HistGradientBoosting+geo`), sin cambiar el valor
+   por defecto.
+3. **Experimento** (`experimento_semillas.py`). Se agregarán:
+   - Un argumento `--variante <nombre>` que escriba en
+     `datos_procesados/semillas/<variante>/semilla_<s>/` y pase al simulador y al
+     entrenador los argumentos de esa variante, para no sobrescribir los resultados de la
+     Sección 7.
+   - Un modo `--reusar-dataset` que omita el simulador si el dataset ya existe (las
+     variantes que solo cambian el modelo no necesitan resimular; ahorra ~1.5 min por
+     semilla).
+   - Una comparación **pareada** entre dos variantes: como las horas con evento son las
+     mismas (mismas semillas), el bootstrap remuestrea horas y calcula la diferencia de
+     ahorro y de pérdidas entre variantes en cada hora. Da un IC más estrecho que
+     comparar los IC por separado.
+
+   Variantes a correr (misma lista de 30 semillas):
+
+   | Variante | Simulador | Modelo | Qué responde | Costo aprox. |
+   |---|---|---|---|---|
+   | `base` | Sección 7 (ya existe) | RF + línea/tramo | Referencia | 0 |
+   | `hgb` | reusa `base` | HistGB + línea/tramo | Decisión abierta 7.1 | ~25 min |
+   | `aviso_perfecto` | `--ruido-aviso 0` | RF + línea/tramo | Cota: cuánto vale saber la duración exacta | ~37 min |
+   | `aviso_ruidoso` | `--ruido-aviso 0.5` | RF + línea/tramo | Valor de un aviso realista | ~37 min |
+
+   `σ = 0.5` significa que, antes de redondear, el aviso queda entre 0.6 y 1.65 veces el
+   restante real en ~2 de cada 3 casos. Como el ruido es multiplicativo, un evento que
+   termina en esta hora (restante 0) siempre se anuncia bien. Es un supuesto ilustrativo: no hay datos del STC sobre la
+   precisión de sus avisos.
+4. **Qué se reporta en `avances.md`** (nueva Sección 8), para cada variante contra
+   `base`: ahorro total, pérdidas, % del ahorro posible capturado (con IC), diferencia
+   pareada con IC y probabilidad bootstrap; y lo mismo contra el reactivo. Criterios de
+   lectura:
+   - Si `aviso_perfecto` no mejora a `base`, la hipótesis de la Sección 7.4 (la IA pierde
+     por predecir el valor esperado sin saber la duración) es falsa y hay que buscar la
+     causa en otro lado (p. ej. el costo del desvío o el umbral de decisión).
+   - Si `aviso_perfecto` mejora pero `aviso_ruidoso` no, el valor del aviso depende de
+     su precisión, y así se reporta.
+   - Si `hgb` no gana a `base` en ahorro pareado ni en pérdidas, se cierra la Sección
+     7.1 manteniendo RandomForest + línea/tramo.
+   - Solo si `aviso_ruidoso` hace que la IA supere al reactivo en ahorro total con
+     probabilidad bootstrap ≥ 95%, se actualiza la afirmación de la tesis de "anticipar
+     reduce el riesgo" a "anticipar ahorra más".
+5. **Fase siguiente (fuera de este plan):** limitación #4 (horizonte de 10–60 min, que
+   requiere pasos sub-horarios en el simulador) y #5 (perfiles O-D derivados de la matriz
+   de afluencia real). Ambas cambian el dataset de raíz e invalidarían la comparación
+   entre variantes, por eso van después.
+
+Tiempo total estimado: ~1 h 40 min de cómputo (3 corridas en paralelo) más el análisis.
 
 ---
 
