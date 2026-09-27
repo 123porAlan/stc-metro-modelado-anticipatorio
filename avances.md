@@ -20,7 +20,7 @@ de México"*), con base en el código y los datos actualmente presentes en
 | Representar la red como grafo con pesos | ✅ Completo | `grafo_metro.py` → `grafo_base_metro.gexf` |
 | Modelo de estimación a horizonte corto (10–60 min) | ⚠️ Parcial (horizonte discreto de 1 hora, no continuo 10-60 min) | `entrenador_anticipatorio.py` → `modelos/modelo_anticipatorio_rf.pkl` |
 | Algoritmo de ruteo que integre la métrica predictiva | ✅ Prueba de concepto funcional | `ruteo_anticipatorio.py` |
-| Integración estimación + ruteo en prototipo funcional | ✅ Demostrado en un caso (Pantitlán→Auditorio, 7:00) | `ruteo_anticipatorio.py` |
+| Integración estimación + ruteo en prototipo funcional | ✅ Funcional en un caso (Pantitlán→Auditorio, 7:00); con eventos estocásticos ya no hay desvío en ese caso | `ruteo_anticipatorio.py` |
 | Explicabilidad de las recomendaciones | ✅ Iniciado (importancia de variables) | `entrenador_anticipatorio.py` → `importancia_variables.png` |
 | Sistema reactivo de comparación (índice 5.5) | ✅ Implementado como baseline dentro del mismo script | `ruteo_anticipatorio.py` (ruta estática vs. ruta IA) |
 
@@ -143,11 +143,23 @@ largos conocidos (p. ej. Ciudad Azteca, La Raza, Tacubaya).
 ### 2.5 `ruteo_anticipatorio.py` — Integración estimación + ruteo
 - Carga grafo base + modelo entrenado + dataset de contexto (usado como proxy de
   "sensores en tiempo real").
-- `crear_grafo_futuro(hora)`: para cada arista con datos en esa hora, predice el
-  retraso futuro y lo suma al tiempo ideal, generando un grafo proyectado.
+- `crear_grafo_futuro(fecha, hora)`: para cada arista con datos en esa fecha y hora,
+  predice el retraso futuro y lo suma al tiempo ideal, generando un grafo proyectado.
+  **[Actualizado 2026-09-27]** Las features se toman del propio modelo
+  (`modelo.feature_names_in_`), incluyendo las dummies de `tipo_evento` (las que no
+  aparecen en esa hora se rellenan con 0), para que el ruteo nunca se desincronice del
+  entrenador. El contexto se filtra por fecha además de hora porque el dataset ahora
+  contiene 14 días.
 - Compara ruta estática (Dijkstra sobre tiempo ideal) vs. ruta anticipatoria (Dijkstra
   sobre pesos proyectados por IA), evaluando ambas contra el tráfico real proyectado.
-- Caso de prueba demostrado: Pantitlán → Auditorio, 7:00 AM.
+- Caso de prueba demostrado: Pantitlán → Auditorio, 7:00 AM (día laboral
+  2026-01-13). Con el modelo multi-día, ambos sistemas eligen la misma ruta
+  (Línea 9 hasta Tacubaya, transbordo a Línea 7): tiempo ideal 37.94 min, tiempo proyectado 40.33 min. Ya no se
+  reproduce el desvío que mostraba la versión anterior, porque la falla fija de Línea 9
+  (7-9am) que lo provocaba fue reemplazada por eventos estocásticos, y ese día a esa
+  hora no hubo un evento que congestionara esta ruta. Para demostrar el beneficio del
+  ruteo anticipatorio hace falta buscar sistemáticamente pares O-D/horas con evento
+  activo (ver Sección 4.4).
 
 ---
 
@@ -194,6 +206,13 @@ commits). Cambios de código:
   días); agrega `tipo_dia`, `hay_evento`, `tipo_evento`, `severidad_evento` al dataset.
 - `entrenador_anticipatorio.py`: si el dataset trae columnas de evento, las agrega como
   features (`hay_evento`, `severidad_evento`, dummies de `tipo_evento`).
+- `ruteo_anticipatorio.py`: **corrección detectada al verificar el pipeline completo.**
+  El script seguía construyendo `X_pred` con las 4 features originales, mientras el
+  modelo reentrenado espera 10, y fallaba con `ValueError: The feature names should
+  match those that were passed during fit.` Además tenía un error silencioso: filtraba
+  el contexto solo por `hora`, así que con 14 días cada arista quedaba con el valor del
+  último día leído, mezclando días distintos. Ahora usa `modelo.feature_names_in_` y
+  filtra por `fecha_viaje` + `hora_viaje` (caso de prueba: `2026-01-13`, 7:00).
 
 ### 4.1 Dataset resultante
 
@@ -266,7 +285,12 @@ menos de la inercia (`congestibilidad_t`).
 > `TASA_BASE_FALLA_MECANICA` y `TASA_BASE_INCIDENTE_PLATAFORMA` en
 > `simulador_congestion.py` contra datos reales (climatología SMN/Conagua para lluvia;
 > boletines de contingencia o notas de prensa del Metro para fallas/incidentes), aunque
-> sea como aproximación documentada y no como calibración estadística rigurosa."
+> sea como aproximación documentada y no como calibración estadística rigurosa; (4)
+> en `ruteo_anticipatorio.py`, en lugar de un solo caso fijo (Pantitlán → Auditorio,
+> 2026-01-13 7:00, donde hoy la ruta IA coincide con la estática), recorre las
+> fechas/horas del conjunto de prueba con `hay_evento=1`, compara ruta estática vs.
+> anticipatoria para un conjunto de pares O-D que crucen los tramos afectados y
+> reporta en cuántos casos la IA cambia la ruta y cuántos minutos ahorra en promedio."
 
 ---
 
