@@ -1,9 +1,15 @@
+import argparse
 import networkx as nx
 import pandas as pd
 import joblib
 from entrenador_anticipatorio import ARCHIVO_DATASET, RUTA_MODELO, TARGET, construir_features, predecir
 
-ARCHIVO_EVALUACION = "datos_procesados/evaluacion_ruteo_eventos.csv"
+parser = argparse.ArgumentParser(description="Ruteo anticipatorio: caso de prueba + evaluación en horas con evento.")
+parser.add_argument("--dataset", default=ARCHIVO_DATASET)
+parser.add_argument("--modelo", default=RUTA_MODELO)
+parser.add_argument("--evaluacion", default="datos_procesados/evaluacion_ruteo_eventos.csv")
+parser.add_argument("--resumen", default="datos_procesados/resumen_ruteo_eventos.csv")
+args = parser.parse_args()
 
 def obtener_id_nodo(G, nombre_estacion):
     """Busca el ID real del nodo en el grafo usando el nombre común."""
@@ -16,13 +22,13 @@ print("1. Cargando el Grafo Base de la infraestructura...")
 G_base = nx.read_gexf("grafo_base_metro.gexf")
 
 print("2. Cargando el Cerebro Anticipatorio...")
-paquete = joblib.load(RUTA_MODELO)
+paquete = joblib.load(args.modelo)
 modelo = paquete['modelo']
 print(f"   Modelo: {paquete['nombre_modelo']} ({'con' if paquete['usar_geo'] else 'sin'} línea/tramo)")
 
 print("3. Cargando contexto actual (Memoria de la red)...")
 # Usaremos el dataset de entrenamiento para simular que leemos los "sensores" actuales del metro
-df_contexto = pd.read_csv(ARCHIVO_DATASET)
+df_contexto = pd.read_csv(args.dataset)
 df_contexto['fecha'] = pd.to_datetime(df_contexto['fecha'])
 
 def proyectar_hora(fecha, hora):
@@ -168,9 +174,9 @@ def evaluar_ruteo_en_eventos():
                 registros.append(registro)
 
     df_eval = pd.DataFrame(registros)
-    df_eval.to_csv(ARCHIVO_EVALUACION, index=False, encoding='utf-8-sig')
+    df_eval.to_csv(args.evaluacion, index=False, encoding='utf-8-sig')
     print(f"Casos evaluados (pares O-D que cruzan un tramo con evento): {len(df_eval)}")
-    print(f"Detalle guardado en: {ARCHIVO_EVALUACION}")
+    print(f"Detalle guardado en: {args.evaluacion}")
 
     ahorro_posible = (df_eval['tiempo_real_estatico'] - df_eval['tiempo_real_oraculo']).sum()
     resumen = []
@@ -187,8 +193,12 @@ def evaluar_ruteo_en_eventos():
             'casos_peor_que_estatico': int((ahorro < -1e-9).sum()),
             'pct_ahorro_posible_capturado': 100 * ahorro.sum() / ahorro_posible if ahorro_posible > 0 else float('nan'),
         })
+    df_resumen = pd.DataFrame(resumen)
+    df_resumen.insert(0, 'horas_con_evento', len(horas_evento))
+    df_resumen.insert(1, 'casos_evaluados', len(df_eval))
+    df_resumen.to_csv(args.resumen, index=False)
     print("\n--- Ahorro de tiempo REAL frente al ruteo estático ---")
-    print(pd.DataFrame(resumen).to_string(index=False, float_format=lambda x: f"{x:.3f}"))
+    print(df_resumen.drop(columns=['horas_con_evento', 'casos_evaluados']).to_string(index=False, float_format=lambda x: f"{x:.3f}"))
     return df_eval
 
 evaluar_ruteo_en_eventos()

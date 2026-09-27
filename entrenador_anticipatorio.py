@@ -1,4 +1,5 @@
 import re
+import argparse
 import pandas as pd
 import numpy as np
 import os
@@ -14,6 +15,7 @@ sns.set_theme(style="whitegrid")
 ARCHIVO_DATASET = "datos_procesados/dataset_features_entrenamiento.csv"
 RUTA_MODELO = "modelos/modelo_anticipatorio.pkl"
 ARCHIVO_COMPARACION = "modelos/comparacion_modelos.csv"
+ARCHIVO_GRAFICA = "importancia_variables.png"
 
 TARGET = 'target_congestibilidad_t_plus_1'
 FEATURES_BASE = [
@@ -175,7 +177,7 @@ def imprimir_tabla(resultados, titulo):
     print(df_res[['configuracion', 'MAE', 'RMSE', 'MAE_evento', 'RMSE_evento', 'n_evento']]
           .sort_values('RMSE_evento').to_string(index=False, float_format=lambda x: f"{x:.4f}"))
 
-def comparar_modelos(df):
+def comparar_modelos(df, archivo_comparacion=ARCHIVO_COMPARACION):
     """Compara RandomForest vs. GradientBoosting vs. HistGradientBoosting, con y sin línea/tramo."""
     print("\n2. Comparando modelos candidatos...")
     df_train, df_test = separar_train_test(df)
@@ -189,9 +191,9 @@ def comparar_modelos(df):
     resultados_validacion = evaluar_validacion_por_dias(df)
     imprimir_tabla(resultados_validacion, f"Validación por días ({DIAS_VALIDACION} pliegues)")
 
-    os.makedirs(os.path.dirname(ARCHIVO_COMPARACION), exist_ok=True)
-    pd.DataFrame(resultados_split + resultados_validacion).to_csv(ARCHIVO_COMPARACION, index=False)
-    print(f"\n   [OK] Comparación guardada en: {ARCHIVO_COMPARACION}")
+    os.makedirs(os.path.dirname(archivo_comparacion) or ".", exist_ok=True)
+    pd.DataFrame(resultados_split + resultados_validacion).to_csv(archivo_comparacion, index=False)
+    print(f"\n   [OK] Comparación guardada en: {archivo_comparacion}")
 
     # Criterio de selección: menor RMSE en filas con evento en la validación por días.
     # Es el segmento que el ruteo anticipatorio necesita predecir bien (los picos de
@@ -243,7 +245,7 @@ def importancia_por_permutacion(modelo, X, y, repeticiones=5, semilla=42):
         importancias[grupo] = np.mean(incrementos)
     return importancias
 
-def graficar_explicabilidad(modelo, X_test, y_test, nombre_modelo):
+def graficar_explicabilidad(modelo, X_test, y_test, nombre_modelo, ruta_grafica=ARCHIVO_GRAFICA):
     """Genera la gráfica de importancia de características para la tesis."""
     print("\n5. Generando análisis de transparencia algorítmica...")
     importancias = importancia_por_permutacion(modelo, X_test, y_test)
@@ -261,7 +263,6 @@ def graficar_explicabilidad(modelo, X_test, y_test, nombre_modelo):
     plt.ylabel('Variable', fontsize=12)
     plt.tight_layout()
 
-    ruta_grafica = "importancia_variables.png"
     plt.savefig(ruta_grafica)
     print(f"   [OK] Gráfica guardada como: '{ruta_grafica}' (Lista para tu tesis).")
     # plt.show() # Descomenta esto si quieres que la gráfica se abra en una ventana
@@ -269,23 +270,30 @@ def graficar_explicabilidad(modelo, X_test, y_test, nombre_modelo):
 def guardar_modelo(paquete, ruta_salida=RUTA_MODELO):
     """Exporta el modelo junto con su codificación para usarlo en el algoritmo de búsqueda de rutas."""
     print("\n6. Exportando modelo...")
-    os.makedirs(os.path.dirname(ruta_salida), exist_ok=True)
+    os.makedirs(os.path.dirname(ruta_salida) or ".", exist_ok=True)
     joblib.dump(paquete, ruta_salida)
     print(f"   [OK] Modelo exportado en: {ruta_salida}")
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Compara modelos candidatos, entrena el elegido y lo exporta.")
+    parser.add_argument("--dataset", default=ARCHIVO_DATASET)
+    parser.add_argument("--modelo", default=RUTA_MODELO)
+    parser.add_argument("--comparacion", default=ARCHIVO_COMPARACION)
+    parser.add_argument("--grafica", default=ARCHIVO_GRAFICA)
+    args = parser.parse_args()
+
     try:
         # 1. Cargar datos
-        df_features = cargar_y_preparar_datos(ARCHIVO_DATASET)
+        df_features = cargar_y_preparar_datos(args.dataset)
 
         # 2. Comparar candidatos y elegir
-        nombre_modelo, usar_geo, df_train, df_test = comparar_modelos(df_features)
+        nombre_modelo, usar_geo, df_train, df_test = comparar_modelos(df_features, args.comparacion)
 
         # 3 y 4. Entrenar y Evaluar el modelo elegido
         modelo, codificacion, X_test, metricas = entrenar_modelo_final(df_train, df_test, nombre_modelo, usar_geo)
 
         # 5. Generar gráfica de Explicabilidad (Objetivo de la tesis)
-        graficar_explicabilidad(modelo, X_test, df_test[TARGET], nombre_modelo)
+        graficar_explicabilidad(modelo, X_test, df_test[TARGET], nombre_modelo, args.grafica)
 
         # 6. Guardar modelo + todo lo necesario para reconstruir sus features
         primera_fila_test = df_test.iloc[0]
@@ -298,9 +306,10 @@ if __name__ == "__main__":
             # El corte 80/20 puede caer a mitad de una hora: el ruteo solo evalúa horas
             # posteriores a esta, que el modelo nunca vio.
             'inicio_test': (primera_fila_test['fecha'], primera_fila_test['hora']),
-        })
+        }, args.modelo)
 
         print("\n🚀 ¡Fase de Inteligencia Anticipatoria completada con éxito!")
 
     except Exception as e:
         print(f"\n❌ Error en la ejecución: {e}")
+        raise SystemExit(1)
