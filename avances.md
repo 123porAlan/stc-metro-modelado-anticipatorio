@@ -2,7 +2,7 @@
 
 **Alumno:** Alan Bellon García
 **Asesor:** M. en Fil. C. Enrique Francisco Soto Astorga
-**Fecha de este reporte:** 2026-09-27 (actualizado — ver [Sección 4](#4-extensión-multi-día--eventos-estocásticos-2026-09-27))
+**Fecha de este reporte:** 2026-09-27 (actualizado — ver [Sección 4](#4-extensión-multi-día--eventos-estocásticos-2026-09-27) y [Sección 5](#5-ubicación-en-la-red-comparación-de-modelos-y-evaluación-sistemática-del-ruteo-2026-09-27))
 
 Este documento resume el estado técnico y metodológico del prototipo descrito en el
 anexo de titulación (*"Modelado y prototipado de un sistema de Inteligencia Artificial
@@ -18,11 +18,11 @@ de México"*), con base en el código y los datos actualmente presentes en
 |---|---|---|
 | Generar dataset sintético de afluencia/disrupciones | ✅ Completo (14 días sintéticos, laboral+fin de semana, eventos estocásticos) | `generador_sintetico_horario.py`, `simulador_congestion.py`, `datos_procesados/*.csv` |
 | Representar la red como grafo con pesos | ✅ Completo | `grafo_metro.py` → `grafo_base_metro.gexf` |
-| Modelo de estimación a horizonte corto (10–60 min) | ⚠️ Parcial (horizonte discreto de 1 hora, no continuo 10-60 min) | `entrenador_anticipatorio.py` → `modelos/modelo_anticipatorio_rf.pkl` |
+| Modelo de estimación a horizonte corto (10–60 min) | ⚠️ Parcial (horizonte discreto de 1 hora, no continuo 10-60 min); modelo elegido por comparación (GradientBoosting + línea/tramo) | `entrenador_anticipatorio.py` → `modelos/modelo_anticipatorio.pkl` |
 | Algoritmo de ruteo que integre la métrica predictiva | ✅ Prueba de concepto funcional | `ruteo_anticipatorio.py` |
-| Integración estimación + ruteo en prototipo funcional | ✅ Funcional en un caso (Pantitlán→Auditorio, 7:00); con eventos estocásticos ya no hay desvío en ese caso | `ruteo_anticipatorio.py` |
-| Explicabilidad de las recomendaciones | ✅ Iniciado (importancia de variables) | `entrenador_anticipatorio.py` → `importancia_variables.png` |
-| Sistema reactivo de comparación (índice 5.5) | ✅ Implementado como baseline dentro del mismo script | `ruteo_anticipatorio.py` (ruta estática vs. ruta IA) |
+| Integración estimación + ruteo en prototipo funcional | ✅ Evaluado sistemáticamente: 27 horas con evento en días no vistos, 84,650 casos O-D; la IA captura 64.6% del ahorro máximo posible (Sección 5.3) | `ruteo_anticipatorio.py` |
+| Explicabilidad de las recomendaciones | ✅ Iniciado (importancia por permutación, agnóstica al modelo) | `entrenador_anticipatorio.py` → `importancia_variables.png` |
+| Sistema reactivo de comparación (índice 5.5) | ✅ Implementado y comparado: estático vs. reactivo vs. anticipatorio vs. oráculo | `ruteo_anticipatorio.py` |
 
 En términos del índice tentativo, el proyecto ha cubierto el **capítulo 4** completo
 (modelado y generación de datos) y tiene un **primer corte funcional del capítulo 5**
@@ -50,21 +50,23 @@ grafo_base_metro.gexf         entradas_sinteticas_horarias.csv
                          ▼
               simulador_congestion.py
         (enrutamiento por hora + función BPR
-         + inyección manual de falla L9 7-9am)
+         + eventos estocásticos, 14 días)
                          │
                          ▼
-      dataset_features_entrenamiento.csv (3,740 filas)
+      dataset_features_entrenamiento.csv (52,360 filas)
                          │
                          ▼
             entrenador_anticipatorio.py
-        (RandomForestRegressor, split 80/20
-         cronológico, MAE/RMSE, importancia
-         de variables, exporta .pkl)
+   (compara RF / GradientBoosting / HistGB,
+    con y sin línea/tramo; split 80/20 +
+    validación por días; importancia por
+    permutación; exporta .pkl)
                          │
                          ▼
              ruteo_anticipatorio.py
-   (usa el modelo para proyectar pesos futuros
-    del grafo y compara ruta estática vs. IA)
+   (proyecta pesos futuros del grafo; compara
+    estático / reactivo / IA / oráculo contra
+    el tráfico real de t+1 en horas con evento)
 ```
 
 ### 2.1 `grafo_metro.py` — Modelado topológico
@@ -131,35 +133,48 @@ largos conocidos (p. ej. Ciudad Azteca, La Raza, Tacubaya).
 ### 2.4 `entrenador_anticipatorio.py` — Modelo predictivo
 - Ordena cronológicamente y separa train/test 80/20 **sin aleatorizar** (evita fuga de
   información temporal).
-- Features: `hora`, `tiempo_ideal`, `congestibilidad_t`, `congestibilidad_t_minus_1` y,
-  **[2026-09-27]** cuando el dataset trae contexto de eventos: `hay_evento`,
-  `severidad_evento` y dummies one-hot de `tipo_evento` (necesarias porque
-  `RandomForestRegressor` no acepta texto). Target: `target_congestibilidad_t_plus_1`.
-- `RandomForestRegressor` (150 árboles, profundidad 10) evaluado con MAE/RMSE.
-- Genera gráfica de importancia de variables (`importancia_variables.png`) como primer
-  paso de explicabilidad.
-- Exporta modelo a `modelos/modelo_anticipatorio_rf.pkl`.
+- Features: `hora`, `tiempo_ideal`, `congestibilidad_t`, `congestibilidad_t_minus_1`,
+  `hay_evento`, `severidad_evento` y dummies one-hot de `tipo_evento` (los modelos de
+  sklearn no aceptan texto). **[2026-09-27, Sección 5]** Ubicación en la red: dummies de
+  `linea` (derivada del ID GTFS del andén; las aristas entre líneas distintas son
+  `transbordo`) y `tramo_congestion_media`, un target encoding suavizado del tramo
+  (congestión futura media del tramo, calculada **solo con entrenamiento**). Target:
+  `target_congestibilidad_t_plus_1`.
+- **[2026-09-27]** Compara 6 configuraciones (`RandomForestRegressor`,
+  `GradientBoostingRegressor`, `HistGradientBoostingRegressor`, cada una con y sin
+  ubicación), con dos evaluaciones: el split cronológico 80/20 y una validación
+  *rolling origin* sobre los últimos 5 días. Reporta MAE/RMSE global y, por separado,
+  en filas con `hay_evento=1`. Elige la configuración con menor RMSE en filas con evento
+  en la validación por días (hoy: `GradientBoosting + línea/tramo`).
+- Explicabilidad por **importancia por permutación** (aumento del RMSE al barajar cada
+  variable; las dummies de una misma variable se barajan juntas), agnóstica al modelo,
+  en `importancia_variables.png`.
+- Exporta a `modelos/modelo_anticipatorio.pkl` un paquete con el modelo, su codificación
+  (categorías y target encoding) y el inicio del set de prueba; `ruteo_anticipatorio.py`
+  reutiliza `construir_features()` del entrenador para no desincronizarse.
 
 ### 2.5 `ruteo_anticipatorio.py` — Integración estimación + ruteo
 - Carga grafo base + modelo entrenado + dataset de contexto (usado como proxy de
   "sensores en tiempo real").
-- `crear_grafo_futuro(fecha, hora)`: para cada arista con datos en esa fecha y hora,
-  predice el retraso futuro y lo suma al tiempo ideal, generando un grafo proyectado.
-  **[Actualizado 2026-09-27]** Las features se toman del propio modelo
-  (`modelo.feature_names_in_`), incluyendo las dummies de `tipo_evento` (las que no
-  aparecen en esa hora se rellenan con 0), para que el ruteo nunca se desincronice del
-  entrenador. El contexto se filtra por fecha además de hora porque el dataset ahora
-  contiene 14 días.
+- `proyectar_hora(fecha, hora)` + `grafo_con_retraso(...)`: para cada arista predice el
+  retraso de la hora siguiente y lo suma al tiempo ideal, generando un grafo proyectado.
+  El contexto se filtra por fecha además de hora porque el dataset contiene 14 días, y
+  las features se construyen con la misma función (`construir_features`) y codificación
+  con que se entrenó el modelo.
+- **[2026-09-27]** Los tiempos "reales" se miden contra la congestión simulada de la hora
+  siguiente (`target_congestibilidad_t_plus_1`). Antes se medían contra la propia
+  proyección de la IA, lo que favorecía a la IA por construcción.
 - Compara ruta estática (Dijkstra sobre tiempo ideal) vs. ruta anticipatoria (Dijkstra
   sobre pesos proyectados por IA), evaluando ambas contra el tráfico real proyectado.
 - Caso de prueba demostrado: Pantitlán → Auditorio, 7:00 AM (día laboral
   2026-01-13). Con el modelo multi-día, ambos sistemas eligen la misma ruta
-  (Línea 9 hasta Tacubaya, transbordo a Línea 7): tiempo ideal 37.94 min, tiempo proyectado 40.33 min. Ya no se
+  (Línea 9 hasta Tacubaya, transbordo a Línea 7): tiempo ideal 37.94 min, tiempo real
+  en t+1 41.22 min (con el modelo RandomForest anterior la proyección era 40.33 min). Ya no se
   reproduce el desvío que mostraba la versión anterior, porque la falla fija de Línea 9
   (7-9am) que lo provocaba fue reemplazada por eventos estocásticos, y ese día a esa
-  hora no hubo un evento que congestionara esta ruta. Para demostrar el beneficio del
-  ruteo anticipatorio hace falta buscar sistemáticamente pares O-D/horas con evento
-  activo (ver Sección 4.4).
+  hora no hubo un evento que congestionara esta ruta.
+- **[2026-09-27]** Evaluación sistemática sobre todas las horas con evento del set de
+  prueba (ver Sección 5.3).
 
 ---
 
@@ -181,6 +196,14 @@ largos conocidos (p. ej. Ciudad Azteca, La Raza, Tacubaya).
 5. **Perfiles origen/destino hardcodeados** (listas fijas de 10 estaciones): no se
    derivan de un análisis estadístico de la matriz de afluencia real, sino de un
    supuesto manual razonado.
+6. **[2026-09-27] El modelo casi no usa las variables de evento** (Sección 5.1): la
+   predicción depende sobre todo de la inercia (`congestibilidad_t`, `t-1`). Con la
+   capacidad constante de 35,000 pas/h y BPR (β=4), un evento típico mueve poco la
+   congestión, así que el efecto del evento en el target es débil.
+7. **[2026-09-27] Lluvia independiente por línea**: el generador sortea la lluvia de las
+   líneas A, B y 12 por separado, cuando en la realidad una tormenta afecta a varias a
+   la vez. Además, con las tasas actuales, enero (temporada seca) tiene ~1.7 eventos de
+   lluvia por día (Sección 5.4).
 
 Ninguno de estos puntos invalida el trabajo — son exactamente el tipo de simplificación
 esperable en una primera iteración de prototipo — pero deben documentarse como alcance y
@@ -266,7 +289,7 @@ menos de la inercia (`congestibilidad_t`).
   incidencia real del STC (ver Sección "Análisis de factibilidad técnica" más abajo,
   que ya anticipaba este punto y sigue vigente para la siguiente iteración).
 
-### 4.4 Siguiente paso
+### 4.4 Siguiente paso (ejecutado — ver [Sección 5](#5-ubicación-en-la-red-comparación-de-modelos-y-evaluación-sistemática-del-ruteo-2026-09-27))
 
 > **Prompt listo para usar en la siguiente sesión de trabajo:**
 >
@@ -291,6 +314,216 @@ menos de la inercia (`congestibilidad_t`).
 > fechas/horas del conjunto de prueba con `hay_evento=1`, compara ruta estática vs.
 > anticipatoria para un conjunto de pares O-D que crucen los tramos afectados y
 > reporta en cuántos casos la IA cambia la ruta y cuántos minutos ahorra en promedio."
+
+---
+
+## 5. Ubicación en la red, comparación de modelos y evaluación sistemática del ruteo (2026-09-27)
+
+Ejecución del prompt de la Sección 4.4. Cambios de código:
+
+- `entrenador_anticipatorio.py`: agrega la ubicación en la red como features (`linea`
+  one-hot + `tramo_congestion_media`, target encoding suavizado calculado solo con
+  entrenamiento); compara RandomForest / GradientBoosting / HistGradientBoosting con y
+  sin ubicación; agrega validación *rolling origin* por días; reporta métricas en filas
+  con evento aparte; cambia la explicabilidad a importancia por permutación; exporta un
+  paquete (`modelos/modelo_anticipatorio.pkl`, reemplaza a `modelo_anticipatorio_rf.pkl`)
+  con modelo + codificación + inicio del set de prueba.
+- `ruteo_anticipatorio.py`: reutiliza `construir_features()` del entrenador; mide los
+  tiempos contra la congestión real de t+1; agrega la evaluación sistemática sobre horas
+  con evento (Sección 5.3), que guarda el detalle en
+  `datos_procesados/evaluacion_ruteo_eventos.csv`.
+
+### 5.1 Comparación de modelos
+
+Métricas en minutos de retraso sobre el tiempo ideal. "Evento" = filas con
+`hay_evento=1`.
+
+**Split cronológico 80/20** (prueba: 16–18 de enero; 10,472 filas, **137 con evento**):
+
+| Configuración | MAE | RMSE | MAE evento | RMSE evento |
+|---|---|---|---|---|
+| HistGradientBoosting (sin ubicación) | 0.0030 | 0.0297 | 0.0301 | 0.1236 |
+| GradientBoosting (sin ubicación) | 0.0032 | 0.0303 | 0.0291 | 0.1263 |
+| **GradientBoosting + línea/tramo** | 0.0039 | 0.0306 | 0.0309 | 0.1296 |
+| HistGradientBoosting + línea/tramo | 0.0036 | 0.0307 | 0.0324 | 0.1346 |
+| RandomForest + línea/tramo | 0.0027 | 0.0313 | 0.0364 | 0.1496 |
+| RandomForest (sin ubicación) — *modelo anterior* | 0.0028 | 0.0313 | 0.0363 | 0.1541 |
+
+**Validación por días** (5 pliegues: cada día del 14 al 18 de enero se predice con un
+modelo entrenado con todos los días previos; **255 filas con evento**):
+
+| Configuración | MAE | RMSE | MAE evento | RMSE evento |
+|---|---|---|---|---|
+| **GradientBoosting + línea/tramo** | 0.0042 | **0.0272** | **0.0369** | **0.1193** |
+| RandomForest + línea/tramo | 0.0032 | 0.0285 | 0.0488 | 0.1459 |
+| HistGradientBoosting + línea/tramo | 0.0044 | 0.0311 | 0.0562 | 0.1728 |
+| HistGradientBoosting (sin ubicación) | 0.0044 | 0.0315 | 0.0591 | 0.1801 |
+| RandomForest (sin ubicación) — *modelo anterior* | 0.0036 | 0.0321 | 0.0579 | 0.1844 |
+| GradientBoosting (sin ubicación) | 0.0043 | 0.0385 | 0.0529 | 0.1965 |
+| *Referencia: persistencia (predecir t+1 = t)* | 0.0151 | 0.0806 | 0.0491 | 0.1802 |
+
+Lectura:
+
+1. **Las dos evaluaciones no coinciden, y la validación por días es la más confiable.**
+   En el split 80/20 la ubicación parece no ayudar, pero ese set tiene solo 3 días y 137
+   filas con evento. En la validación por días (5 días, 255 filas con evento) la
+   ubicación mejora a los tres modelos, y más en el segmento con evento: RandomForest
+   baja su RMSE con evento de 0.184 a 0.146 (−21%) y GradientBoosting de 0.197 a 0.119
+   (−39%). Por eso el criterio de selección es el RMSE con evento en la validación por
+   días.
+2. **Modelo elegido: GradientBoosting + línea/tramo.** Frente al modelo anterior
+   (RandomForest sin ubicación), en la validación por días reduce el RMSE con evento 35%
+   (0.184 → 0.119) y el RMSE global 15% (0.032 → 0.027). A cambio, su MAE global es algo
+   peor (0.0042 vs. 0.0036): predice retrasos pequeños mayores a 0 en tramos que no se
+   congestionan (75% del target es 0). Para el ruteo pesa más acertar los picos de
+   retraso, que es lo que mide el RMSE.
+3. **HistGradientBoosting no mejoró sobre GradientBoosting** a pesar de lo planteado en
+   la Sección 4.4. El problema no es tanto el desbalance como la poca señal (punto 5).
+4. **Todos los modelos superan a la persistencia** en RMSE global y con evento, así que
+   el modelo aprende algo más que "mañana igual que hoy".
+5. **La señal de evento sigue siendo débil.** En la importancia por permutación del modelo
+   elegido (aumento del RMSE al barajar la variable, set de prueba 80/20), dominan
+   `congestibilidad_t` (0.022 min) y `congestibilidad_t_minus_1` (0.017), seguidas de
+   `hora` (0.003) y `tramo_congestion_media` (0.003). `tipo_evento` aporta 0.0005 y
+   `hay_evento`/`severidad_evento` ≈ 0. La causa probable está en el simulador, no en
+   el modelo: con capacidad constante y BPR, un evento típico cambia poco el retraso, y
+   ese efecto ya queda reflejado en `congestibilidad_t` (el evento ya estaba activo en t).
+   Se agrega como limitación #6 en la Sección 3.
+
+### 5.2 Métricas del modelo exportado
+
+El modelo exportado es `GradientBoosting + línea/tramo`, entrenado con el 80% inicial
+(no con todo el dataset, para que el ruteo se evalúe en días que el modelo no vio). En el
+20% final: MAE 0.0039 min, RMSE 0.0306 min; en las 137 filas con evento: MAE 0.0309 min,
+RMSE 0.1296 min.
+
+### 5.3 Evaluación sistemática del ruteo en horas con evento
+
+**Diseño.** Se recorren las **27 horas con al menos un tramo en evento** del set de
+prueba (16, 17 y 18 de enero). Para cada hora se toman todos los pares origen-destino
+(una estación por nombre, 163 estaciones) cuya **ruta estática cruza un tramo con
+evento**: **84,650 casos**. Para cada caso se calculan cuatro rutas y todas se miden
+contra el **tráfico real simulado de la hora siguiente**:
+
+- **Estático**: tiempo ideal, sin información de tráfico (baseline).
+- **Reactivo**: congestión observada en la hora actual t (sistema reactivo del índice 5.5).
+- **Anticipatorio**: congestión que la IA proyecta para t+1.
+- **Oráculo**: congestión real de t+1. Es la cota superior: el mayor ahorro posible.
+
+| Sistema | Cambia ruta | Casos que ganan / pierden vs. estático | Ahorro medio si cambia | Ahorro neto total | % del ahorro posible capturado |
+|---|---|---|---|---|---|
+| Reactivo | 542 (0.64%) | 220 / 320 | −0.02 min | −8.8 min | **−5.0%** |
+| Anticipatorio (IA) | 282 (0.33%) | 148 / 134 | +0.40 min | +114.0 min | **64.6%** |
+| Oráculo | 234 (0.28%) | 234 / 0 | +0.75 min | +176.3 min | 100% |
+
+Lectura:
+
+1. **Resultado central: el ruteo anticipatorio captura 64.6% del ahorro máximo posible;
+   el reactivo empeora al usuario (−5%).** El sistema reactivo esquiva la congestión de
+   la hora actual, que en la hora siguiente ya cambió (los eventos duran 1–4 h y la
+   demanda cambia cada hora). Por eso cambia de ruta más veces (542) y pierde en más
+   casos de los que gana (320 vs. 220). La IA cambia menos (282) y gana más de lo que
+   pierde: +1.12 min en promedio cuando acierta y −0.39 min cuando falla. Es el
+   argumento cuantitativo para la tesis: anticipar es mejor que reaccionar.
+2. **La magnitud absoluta es pequeña.** Solo 0.28% de los casos tiene una ruta mejor que
+   la estática (oráculo), el ahorro máximo en un caso es 1.97 min y el viaje medio dura
+   ~40 min. Esto viene del simulador, no del ruteo: con la capacidad constante de 35,000
+   pas/h y BPR, un evento casi nunca vuelve una ruta alternativa (con transbordos de
+   5 min) más rápida que la directa. Para defender el ahorro en tiempo, antes hay que
+   diferenciar capacidades por tramo (limitación #3) o dar a los incidentes un efecto
+   de cierre de tramo (ya previsto en el análisis de factibilidad, tabla 3.1).
+3. **La IA se equivoca en casi la mitad de sus cambios de ruta** (134 de 282). Esto es
+   consistente con su RMSE con evento (~0.12–0.13 min): el ahorro disponible por caso es
+   del mismo orden que el error del modelo.
+4. **Cautela estadística:** los 84,650 casos no son independientes. Salen de 27 horas y
+   de pocos eventos, y muchos pares O-D comparten los mismos tramos afectados. La
+   conclusión (anticipatorio > estático > reactivo) es consistente en esta muestra, pero
+   para citarla con intervalos de confianza hay que repetir la simulación con varias
+   semillas aleatorias.
+
+### 5.4 Propuesta de fuentes para calibrar las tasas de eventos
+
+Parámetros en `simulador_congestion.py`: `TASA_BASE_LLUVIA = 0.02`,
+`TASA_BASE_FALLA_MECANICA = 0.01` y `TASA_BASE_INCIDENTE_PLATAFORMA = 0.006` (eventos
+esperados por hora y por línea en hora valle), `FACTOR_HORA_PICO = 2.5` (6 horas pico)
+y `FACTOR_TEMPORADA_LLUVIAS = 6.0` (mayo–octubre). La operación simulada va de las 5 a
+las 23 h (19 horas: 13 valle + 6 pico), así que el número esperado de eventos por línea
+y por día es `λ_base × (13 + 2.5 × 6) = λ_base × 28`.
+
+**Chequeo de orden de magnitud con los valores actuales:**
+
+| Tipo | Eventos esperados/día (tasas actuales) | Referencia real |
+|---|---|---|
+| Falla mecánica + incidente de plataforma (12 líneas) | (0.01 + 0.006) × 28 × 12 ≈ **5.4** | **3,708 incidentes con desalojo de trenes entre 2018 y agosto de 2022**, según respuesta del STC vía la Plataforma Nacional de Transparencia (El Universal): ≈ 1,704 días → **≈ 2.2 por día** en toda la red. La falla más frecuente fue el sistema de puertas (34 de cada 100). |
+| Lluvia en enero (3 líneas de superficie) | 0.02 × 28 × 3 ≈ **1.7** | Enero es temporada seca en la CDMX; los días con lluvia del mes se obtienen de las Normales Climatológicas del SMN (observatorio de Tacubaya). |
+| Lluvia en mayo–octubre | 0.02 × 6 × 28 ≈ **3.4 por línea** | Idem, meses de temporada de lluvias. |
+
+Las tasas de falla/incidente están en el orden correcto (unas 2.5 veces la referencia).
+Parte de la diferencia es esperable, porque los desalojos son solo los incidentes más
+graves y la referencia subestima el total. La lluvia de enero parece sobreestimada.
+
+**Fuentes propuestas y método de calibración:**
+
+1. **Lluvia: frecuencia diaria.** Normales Climatológicas del SMN/Conagua
+   (<https://smn.conagua.gob.mx/es/climatologia/informacion-climatologica/normales-climatologicas-por-estado>),
+   Ciudad de México, estación Tacubaya (observatorio de referencia del SMN): número medio
+   de días con precipitación por mes. Con eso, `P(lluvia en el día | mes)` sustituye al
+   factor binario de temporada (`FACTOR_TEMPORADA_LLUVIAS`) por un valor para cada mes.
+2. **Lluvia: distribución horaria y extensión espacial.** Red pluviométrica del
+   Observatorio Hidrológico del Instituto de Ingeniería UNAM (OH-IIUNAM), con unas 55
+   estaciones en la CDMX que registran la intensidad minuto a minuto
+   (<https://www.iingen.unam.mx/es-mx/AlmacenDigital/Notas/Paginas/observatoriohidrologico.aspx>).
+   Con las estaciones cercanas a las líneas A, B y 12 se estima (a) la probabilidad de
+   lluvia por hora del día, que en la CDMX se concentra en la tarde-noche y no sigue la
+   hora pico del Metro (hoy se le aplica `FACTOR_HORA_PICO` sin justificación física), y
+   (b) con qué frecuencia llueve a la vez en varias líneas, para dejar de sortear cada
+   línea por separado (limitación #7). Hay que pedir los datos al OH-IIUNAM; su
+   publicación en tiempo real es por redes y web.
+3. **Fallas mecánicas e incidentes de plataforma.**
+   - Punto de partida documentado: la cifra de 3,708 desalojos 2018–2022 citada arriba
+     (El Universal, <https://www.eluniversal.com.mx/metropoli/de-2018-2022-se-reportaron-3-mil-708-incidentes>),
+     que da `λ_base ≈ 2.2 / (12 líneas × 28) ≈ 0.0065` por línea-hora valle para ambos
+     tipos juntos, suponiendo el mismo factor de hora pico.
+   - Para separarlo **por línea, tipo y hora**: solicitud de información al STC por la
+     Plataforma Nacional de Transparencia o su Unidad de Transparencia
+     (<https://www.metro.cdmx.gob.mx/tranparencias/transparencia-cdmx>), pidiendo el
+     registro de incidentes/averías con fecha, hora, línea, estación y causa. Hay
+     antecedentes de que el STC entrega este tipo de datos: la cifra anterior y el
+     reporte de 136 averías en la Línea 12 tras su reapertura (El Gráfico, 2024).
+   - Complemento (y validación del factor de hora pico): recopilación manual de los
+     avisos de la cuenta oficial del Metro en redes sociales durante algunas semanas.
+4. **Método de conversión a tasa de Poisson** (para cualquiera de las fuentes): si en
+   `D` días se observaron `N` eventos de un tipo en una línea, con `F` = factor de hora
+   pico, entonces `λ_base = N / (D × (13 + 6·F))`. Si la fuente trae la hora del evento,
+   `F` también se estima: la tasa por hora en hora pico dividida entre la tasa por hora
+   en valle.
+
+Esto es una **aproximación documentada, no una calibración estadística rigurosa**: los
+desalojos no son todos los incidentes, la cifra agrega todas las líneas y todo el
+periodo 2018–2022, y la climatología de Tacubaya representa un solo punto de la ciudad.
+Aun así, cada parámetro queda respaldado por una fuente citable en lugar de un valor
+ilustrativo.
+
+### 5.5 Siguiente paso
+
+> **Prompt listo para usar en la siguiente sesión de trabajo:**
+>
+> "La evaluación sistemática (Sección 5.3) muestra que el ruteo anticipatorio captura
+> 64.6% del ahorro posible y el reactivo empeora (−5%), pero el ahorro absoluto es
+> pequeño (el oráculo solo mejora 0.28% de los casos, máximo 1.97 min) porque, con
+> capacidad constante y BPR, los eventos casi no cambian la ruta óptima; además el modelo
+> apenas usa las variables de evento. Ataca la causa en el simulador: (1) sustituye
+> `CAPACIDAD_PROMEDIO_TRAMO_HORA` por una capacidad por línea (trenes por hora ×
+> capacidad del tren, con valores documentados del STC: frecuencia de paso y tipo de
+> tren por línea); (2) haz que `incidente_plataforma` pueda cerrar el tramo
+> temporalmente (peso muy alto o arista removida en `G_hora`) en lugar de solo agregar
+> carga fantasma; (3) aplica las tasas de la Sección 5.4 (`λ_base ≈ 0.0065` combinado
+> para falla+incidente, lluvia por mes según días con precipitación de Tacubaya, sin
+> factor de hora pico para lluvia, y lluvia correlacionada entre las líneas A, B y 12);
+> (4) regenera el dataset, reentrena (el entrenador ya compara modelos) y vuelve a
+> correr `ruteo_anticipatorio.py`. Repite la simulación con al menos 5 semillas para
+> reportar la media y el intervalo del % de ahorro capturado por cada sistema, y
+> actualiza `avances.md`."
 
 ---
 
@@ -377,26 +610,23 @@ modelo tenga suficientes ejemplos de eventos disruptivos que aprender.
 
 ---
 
-## Mensaje de commit sugerido
+## Mensaje de commit
 
 ```
-feat: simular 14 dias con eventos estocasticos y reentrenar modelo anticipatorio
+feat: comparar modelos con ubicacion en red y evaluar ruteo en horas con evento
 
-Reemplaza el dia unico (2026-01-13) y la falla deterministica de Linea 9 por:
-- generador_sintetico_horario.py: parametrizado por DIAS_SIMULACION (14 fechas,
-  laboral/fin de semana), perfil horario de fin de semana derivado del laboral,
-  una matriz O-D por dia y manifiesto_dias_simulados.csv como salida.
-- simulador_congestion.py: generador de eventos estocasticos (lluvia, falla
-  mecanica, incidente de plataforma) via Poisson por hora/linea/temporada,
-  severidad y duracion muestreadas; cache de rutas estaticas por par origen-destino
-  para escalar a multiples dias; agrega hay_evento/tipo_evento/severidad_evento
-  al dataset (52,360 filas vs. 3,740 antes).
-- entrenador_anticipatorio.py: incorpora el contexto de evento como features
-  (dummies de tipo_evento + hay_evento + severidad_evento) cuando estan presentes.
-
-MAE sube de 0.0000109 a 0.0028 min y RMSE de 0.000233 a 0.0313 min frente al
-dataset de un solo dia: el baseline anterior tenia fuga temporal de facto (mismo
-patron de falla, split separaba horas del mismo dia). El split ahora separa dias
-reales (12 train / 3 test) con eventos genuinamente distintos entre si.
-
+- entrenador_anticipatorio.py: agrega linea (one-hot) y target encoding de
+  tramo (solo con train); compara RandomForest, GradientBoosting y
+  HistGradientBoosting con y sin ubicacion, en split 80/20 y validacion por
+  dias (5 pliegues); reporta metricas aparte en filas con evento; elige por
+  RMSE con evento (GradientBoosting + linea/tramo: 0.184 -> 0.119 vs. modelo
+  anterior); importancia por permutacion; exporta paquete
+  modelos/modelo_anticipatorio.pkl (reemplaza modelo_anticipatorio_rf.pkl).
+- ruteo_anticipatorio.py: reutiliza construir_features del entrenador; mide
+  rutas contra la congestion real de t+1 (antes contra la proyeccion de la
+  IA); evalua estatico/reactivo/anticipatorio/oraculo en 27 horas con evento
+  de dias no vistos (84,650 casos O-D): la IA captura 64.6% del ahorro
+  posible, el reactivo -5%.
+- avances.md: seccion 5 con resultados y propuesta de fuentes para calibrar
+  tasas de eventos (SMN Tacubaya, OH-IIUNAM, desalojos STC via PNT).
 ```
