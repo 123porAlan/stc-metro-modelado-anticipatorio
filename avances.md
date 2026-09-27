@@ -2,7 +2,7 @@
 
 **Alumno:** Alan Bellon García
 **Asesor:** M. en Fil. C. Enrique Francisco Soto Astorga
-**Fecha de este reporte:** 2026-09-27 (actualizado — ver [Sección 4](#4-extensión-multi-día--eventos-estocásticos-2026-09-27) , [Sección 5](#5-ubicación-en-la-red-comparación-de-modelos-y-evaluación-sistemática-del-ruteo-2026-09-27) y [Sección 6](#6-capacidad-por-línea-suspensión-de-tramos-tasas-calibradas-y-experimento-multi-semilla-2026-09-27))
+**Fecha de este reporte:** 2026-09-27 (actualizado — ver [Sección 4](#4-extensión-multi-día--eventos-estocásticos-2026-09-27) , [Sección 5](#5-ubicación-en-la-red-comparación-de-modelos-y-evaluación-sistemática-del-ruteo-2026-09-27) , [Sección 6](#6-capacidad-por-línea-suspensión-de-tramos-tasas-calibradas-y-experimento-multi-semilla-2026-09-27) y [Sección 7](#7-selección-fija-de-modelo-30-semillas-y-edad-del-evento-2026-09-27))
 
 Este documento resume el estado técnico y metodológico del prototipo descrito en el
 anexo de titulación (*"Modelado y prototipado de un sistema de Inteligencia Artificial
@@ -18,9 +18,9 @@ de México"*), con base en el código y los datos actualmente presentes en
 |---|---|---|
 | Generar dataset sintético de afluencia/disrupciones | ✅ Completo (14 días sintéticos, laboral+fin de semana, eventos estocásticos con tasas calibradas, capacidad por línea) | `generador_sintetico_horario.py`, `simulador_congestion.py`, `datos_procesados/*.csv` |
 | Representar la red como grafo con pesos | ✅ Completo | `grafo_metro.py` → `grafo_base_metro.gexf` |
-| Modelo de estimación a horizonte corto (10–60 min) | ⚠️ Parcial (horizonte discreto de 1 hora, no continuo 10-60 min); comparación de 6 configuraciones; con 5 semillas gana RandomForest + línea/tramo, pero la selección por semilla es inestable (Sección 6.4) | `entrenador_anticipatorio.py` → `modelos/modelo_anticipatorio.pkl` |
+| Modelo de estimación a horizonte corto (10–60 min) | ⚠️ Parcial (horizonte discreto de 1 hora, no continuo 10-60 min); comparación de 6 configuraciones; modelo fijo RandomForest + línea/tramo porque la selección por semilla es inestable (Secciones 6.4 y 7.1) | `entrenador_anticipatorio.py` → `modelos/modelo_anticipatorio.pkl` |
 | Algoritmo de ruteo que integre la métrica predictiva | ✅ Prueba de concepto funcional | `ruteo_anticipatorio.py` |
-| Integración estimación + ruteo en prototipo funcional | ⚠️ Evaluado con 5 semillas (39 horas con evento, 82,784 casos O-D): la IA pierde 18× menos que el reactivo, pero su ventaja en ahorro total no es significativa (Sección 6.5) | `ruteo_anticipatorio.py` |
+| Integración estimación + ruteo en prototipo funcional | ⚠️ Evaluado con 30 semillas (258 horas con evento, 525,446 casos O-D): la IA pierde 5.3× menos que el reactivo (IC excluye 0) y captura 47.7% [23.2; 67.6] del ahorro posible, pero su ventaja en ahorro total no es significativa (Sección 7.3) | `ruteo_anticipatorio.py` |
 | Explicabilidad de las recomendaciones | ✅ Iniciado (importancia por permutación, agnóstica al modelo) | `entrenador_anticipatorio.py` → `importancia_variables.png` |
 | Sistema reactivo de comparación (índice 5.5) | ✅ Implementado y comparado: estático vs. reactivo vs. anticipatorio vs. oráculo | `ruteo_anticipatorio.py` |
 
@@ -59,8 +59,9 @@ grafo_base_metro.gexf         entradas_sinteticas_horarias.csv
             entrenador_anticipatorio.py
    (compara RF / GradientBoosting / HistGB,
     con y sin línea/tramo; split 80/20 +
-    validación por días; importancia por
-    permutación; exporta .pkl)
+    validación por días; exporta modelo fijo
+    RF + línea/tramo; importancia por
+    permutación; .pkl)
                          │
                          ▼
              ruteo_anticipatorio.py
@@ -207,7 +208,11 @@ largos conocidos (p. ej. Ciudad Azteca, La Raza, Tacubaya).
    entre semillas y la ventaja del ruteo anticipatorio en ahorro total no es
    significativa. Hace falta más simulación (más semillas o más días). Además, lluvia y
    falla mecánica casi no generan retraso (la carga fantasma apenas mueve la BPR con
-   β=4); solo la suspensión por incidente lo hace.
+   β=4); solo la suspensión por incidente lo hace. **Actualización (Sección 7):** con 30
+   semillas la selección se fijó (RF + línea/tramo) y las pérdidas del ruteo ya tienen IC,
+   pero la ventaja en ahorro total sigue sin ser significativa (60%): no es un problema de
+   tamaño de muestra sino de que la IA predice el valor esperado de incidentes que duran
+   poco (Sección 7.4).
 7. ~~**Lluvia independiente por línea y sobreestimada**~~ **RESUELTO PARCIALMENTE
    2026-09-27** (Sección 6.3): un episodio por día lluvioso, con probabilidad mensual
    del SMN y correlacionado entre líneas. La hora de inicio (uniforme) y la probabilidad
@@ -222,7 +227,7 @@ quedar como candidatos directos para la siguiente fase.
 
 ## 4. Extensión multi-día + eventos estocásticos (2026-09-27)
 
-Esta sección documenta la ejecución del prompt de la sesión anterior (ver historial de
+Esta sección documenta la ejecución del plan de la sesión anterior (ver historial de
 commits). Cambios de código:
 
 - `generador_sintetico_horario.py`: parametrizado por `DIAS_SIMULACION` (14 fechas de
@@ -300,35 +305,36 @@ menos de la inercia (`congestibilidad_t`).
 
 ### 4.4 Siguiente paso (ejecutado — ver [Sección 5](#5-ubicación-en-la-red-comparación-de-modelos-y-evaluación-sistemática-del-ruteo-2026-09-27))
 
-> **Prompt listo para usar en la siguiente sesión de trabajo:**
->
-> "El dataset de entrenamiento ya tiene 14 días con eventos estocásticos, pero la señal
-> de evento (`hay_evento`/`tipo_evento`/`severidad_evento`) solo aporta ~1.9% de
-> importancia porque apenas 1.66% de las filas tienen un evento activo. Antes de
-> calibrar tasas contra fuentes reales, sube la proporción de señal explotable: (1)
-> añade `linea`/`tramo` como variable categórica (dummies o target encoding) para que
-> el modelo pueda aprender qué tramos son estructuralmente más propensos a congestión,
-> ya que hoy el modelo no sabe en qué parte de la red está parado; (2) evalúa si migrar
-> de `RandomForestRegressor` a `GradientBoostingRegressor` (o HistGradientBoosting, que
-> maneja mejor el desbalance de clases raras) mejora la predicción específicamente en
-> las filas con `hay_evento=1` (repórtalo aparte del MAE/RMSE global, ya que hoy ese
-> segmento es <2% de los datos y puede quedar diluido); (3) documenta en `avances.md`
-> una propuesta concreta de fuentes para calibrar `TASA_BASE_LLUVIA`,
-> `TASA_BASE_FALLA_MECANICA` y `TASA_BASE_INCIDENTE_PLATAFORMA` en
-> `simulador_congestion.py` contra datos reales (climatología SMN/Conagua para lluvia;
-> boletines de contingencia o notas de prensa del Metro para fallas/incidentes), aunque
-> sea como aproximación documentada y no como calibración estadística rigurosa; (4)
-> en `ruteo_anticipatorio.py`, en lugar de un solo caso fijo (Pantitlán → Auditorio,
-> 2026-01-13 7:00, donde hoy la ruta IA coincide con la estática), recorre las
-> fechas/horas del conjunto de prueba con `hay_evento=1`, compara ruta estática vs.
-> anticipatoria para un conjunto de pares O-D que crucen los tramos afectados y
-> reporta en cuántos casos la IA cambia la ruta y cuántos minutos ahorra en promedio."
+**Bitácora de ingeniería.** Punto de partida: el dataset de entrenamiento ya tenía 14
+días con eventos estocásticos, pero la señal de evento (`hay_evento`/`tipo_evento`/
+`severidad_evento`) solo aportaba ~1.9% de importancia porque apenas 1.66% de las filas
+tenían un evento activo. Antes de calibrar tasas contra fuentes reales se buscó subir la
+proporción de señal explotable. Pasos implementados:
+
+1. Se añadió `linea`/`tramo` como variable categórica (dummies de línea + target
+   encoding del tramo) para que el modelo pudiera aprender qué tramos son
+   estructuralmente más propensos a congestión; hasta entonces el modelo no sabía en qué
+   parte de la red estaba parado.
+2. Se evaluó migrar de `RandomForestRegressor` a `GradientBoostingRegressor` y a
+   `HistGradientBoostingRegressor` (que maneja mejor el desbalance de clases raras),
+   reportando la predicción en las filas con `hay_evento=1` aparte del MAE/RMSE global,
+   ya que ese segmento era <2% de los datos y podía quedar diluido.
+3. Se documentó en `avances.md` una propuesta concreta de fuentes para calibrar
+   `TASA_BASE_LLUVIA`, `TASA_BASE_FALLA_MECANICA` y `TASA_BASE_INCIDENTE_PLATAFORMA` en
+   `simulador_congestion.py` (climatología SMN/Conagua para lluvia; boletines de
+   contingencia, notas de prensa y transparencia del Metro para fallas/incidentes), como
+   aproximación documentada y no como calibración estadística rigurosa (Sección 5.4).
+4. En `ruteo_anticipatorio.py`, además del caso fijo (Pantitlán → Auditorio,
+   2026-01-13 7:00, donde la ruta IA coincidía con la estática), se agregó un recorrido
+   de las fechas/horas del conjunto de prueba con `hay_evento=1` que compara ruta
+   estática vs. anticipatoria en los pares O-D que cruzan los tramos afectados y reporta
+   en cuántos casos la IA cambia la ruta y cuántos minutos ahorra (Sección 5.3).
 
 ---
 
 ## 5. Ubicación en la red, comparación de modelos y evaluación sistemática del ruteo (2026-09-27)
 
-Ejecución del prompt de la Sección 4.4. Cambios de código:
+Ejecución del plan de la Sección 4.4. Cambios de código:
 
 - `entrenador_anticipatorio.py`: agrega la ubicación en la red como features (`linea`
   one-hot + `tramo_congestion_media`, target encoding suavizado calculado solo con
@@ -518,30 +524,32 @@ ilustrativo.
 
 ### 5.5 Siguiente paso (ejecutado — ver [Sección 6](#6-capacidad-por-línea-suspensión-de-tramos-tasas-calibradas-y-experimento-multi-semilla-2026-09-27))
 
-> **Prompt listo para usar en la siguiente sesión de trabajo:**
->
-> "La evaluación sistemática (Sección 5.3) muestra que el ruteo anticipatorio captura
-> 64.6% del ahorro posible y el reactivo empeora (−5%), pero el ahorro absoluto es
-> pequeño (el oráculo solo mejora 0.28% de los casos, máximo 1.97 min) porque, con
-> capacidad constante y BPR, los eventos casi no cambian la ruta óptima; además el modelo
-> apenas usa las variables de evento. Ataca la causa en el simulador: (1) sustituye
-> `CAPACIDAD_PROMEDIO_TRAMO_HORA` por una capacidad por línea (trenes por hora ×
-> capacidad del tren, con valores documentados del STC: frecuencia de paso y tipo de
-> tren por línea); (2) haz que `incidente_plataforma` pueda cerrar el tramo
-> temporalmente (peso muy alto o arista removida en `G_hora`) en lugar de solo agregar
-> carga fantasma; (3) aplica las tasas de la Sección 5.4 (`λ_base ≈ 0.0065` combinado
-> para falla+incidente, lluvia por mes según días con precipitación de Tacubaya, sin
-> factor de hora pico para lluvia, y lluvia correlacionada entre las líneas A, B y 12);
-> (4) regenera el dataset, reentrena (el entrenador ya compara modelos) y vuelve a
-> correr `ruteo_anticipatorio.py`. Repite la simulación con al menos 5 semillas para
-> reportar la media y el intervalo del % de ahorro capturado por cada sistema, y
-> actualiza `avances.md`."
+**Bitácora de ingeniería.** Punto de partida: la evaluación sistemática (Sección 5.3)
+mostraba que el ruteo anticipatorio capturaba 64.6% del ahorro posible y el reactivo
+empeoraba (−5%), pero el ahorro absoluto era pequeño (el oráculo solo mejoraba 0.28% de
+los casos, máximo 1.97 min) porque, con capacidad constante y BPR, los eventos casi no
+cambiaban la ruta óptima; además el modelo apenas usaba las variables de evento. Se atacó
+la causa en el simulador. Pasos implementados:
+
+1. Se sustituyó `CAPACIDAD_PROMEDIO_TRAMO_HORA` por una capacidad por línea (trenes por
+   hora × capacidad del tren, con valores documentados del STC: parque vehicular,
+   disponibilidad e intervalo mínimo) (Sección 6.1).
+2. Se hizo que `incidente_plataforma` suspenda temporalmente el tramo en lugar de solo
+   agregar carga fantasma (Sección 6.2).
+3. Se aplicaron las tasas de la Sección 5.4 (`λ_base ≈ 0.0065` combinado para
+   falla+incidente, lluvia por mes según días con precipitación de Tacubaya, sin factor
+   de hora pico para lluvia, y lluvia correlacionada entre las líneas A, B y 12)
+   (Sección 6.3).
+4. Se regeneró el dataset, se reentrenó (el entrenador ya comparaba modelos) y se volvió
+   a correr `ruteo_anticipatorio.py`. La simulación se repitió con 5 semillas para
+   reportar la media y el intervalo del % de ahorro capturado por cada sistema
+   (Secciones 6.4 y 6.5), y se actualizó `avances.md`.
 
 ---
 
 ## 6. Capacidad por línea, suspensión de tramos, tasas calibradas y experimento multi-semilla (2026-09-27)
 
-Ejecución del prompt de la Sección 5.5. Cambios de código:
+Ejecución del plan de la Sección 5.5. Cambios de código:
 
 - `simulador_congestion.py`:
   - Capacidad por sentido y por línea en lugar de la constante de 35,000 pas/h.
@@ -703,25 +711,198 @@ Lectura:
    dependía de las tasas sobreestimadas y de la carga sumando ambos sentidos, y **queda
    reemplazada** por esta.
 
-### 6.6 Siguiente paso
+### 6.6 Siguiente paso (ejecutado — ver [Sección 7](#7-selección-fija-de-modelo-30-semillas-y-edad-del-evento-2026-09-27))
 
-> **Prompt listo para usar en la siguiente sesión de trabajo:**
->
-> "Con el simulador recalibrado (Sección 6), el ruteo anticipatorio pierde 18 veces menos
-> que el reactivo, pero la diferencia en ahorro total no es significativa (probabilidad
-> bootstrap 54%) porque solo hay ~12 horas con incidentes de impacto en 5 semillas, y la
-> selección de modelo cambia de ganador en 4 de 5 semillas. (1) Cambia el criterio de
-> selección en `entrenador_anticipatorio.py` para que no dependa de ~20 filas con evento:
-> fija la familia de modelo con el resultado agregado multi-semilla (RandomForest +
-> línea/tramo) o elige por RMSE global en la validación por días, y justifícalo en
-> `avances.md`. (2) Aumenta la evidencia: sube `SEMILLAS` en `experimento_semillas.py`
-> a 30 (unos 30–40 min con 3 corridas en paralelo) y reporta de nuevo el bootstrap por
-> horas con evento, incluida la probabilidad de que el anticipatorio ahorre más que el
-> reactivo y un IC para las pérdidas de cada sistema. (3) Agrega al modelo una variable
-> de *edad del evento* (horas desde que empezó; el simulador conoce `hora_inicio` y
-> `duracion`, pero solo la hora de inicio sería observable en tiempo real) para que la IA
-> aprenda la persistencia de los incidentes, que es donde hoy pierde contra el reactivo.
-> Actualiza `avances.md` con los resultados."
+**Bitácora de ingeniería.** Punto de partida: con el simulador recalibrado (Sección 6), el
+ruteo anticipatorio perdía 18 veces menos que el reactivo, pero la diferencia en ahorro
+total no era significativa (probabilidad bootstrap 54%) porque solo había ~12 horas con
+incidentes de impacto en 5 semillas, y la selección de modelo cambiaba de ganador en 4 de
+5 semillas. Pasos implementados (resultados en la [Sección 7](#7-selección-fija-de-modelo-30-semillas-y-edad-del-evento-2026-09-27)):
+
+1. Se cambió el criterio de selección en `entrenador_anticipatorio.py` para que no
+   dependiera de ~20 filas con evento: se fijó la configuración con el resultado
+   agregado multi-semilla (RandomForest + línea/tramo, constante `MODELO_ELEGIDO`) y se
+   justificó en `avances.md` (Sección 7.1).
+2. Se aumentó la evidencia: `SEMILLAS` en `experimento_semillas.py` pasó de 5 a 30 (las
+   5 originales + 1001–1025; 36.7 min con 3 corridas en paralelo) y se volvió a reportar
+   el bootstrap por horas con evento, incluida la probabilidad de que el anticipatorio
+   ahorre más que el reactivo y un IC para las pérdidas de cada sistema (Sección 7.3).
+3. Se agregó al modelo la variable `edad_evento` (horas desde que empezó el evento;
+   el simulador conoce `hora_inicio` y `duracion`, pero solo expone la hora de inicio,
+   que sería observable en tiempo real) para que la IA pudiera aprender la persistencia
+   de los incidentes, que era donde perdía contra el reactivo (Sección 7.4).
+4. Se actualizó `avances.md` con los resultados.
+
+---
+
+## 7. Selección fija de modelo, 30 semillas y edad del evento (2026-09-27)
+
+Ejecución del plan de la Sección 6.6. Cambios de código:
+
+- `simulador_congestion.py`: guarda `edad_evento` por tramo y hora (`hora − hora_inicio`
+  del evento más severo del tramo; 0 en la primera hora, −1 sin evento). La duración no
+  se expone. Los sorteos aleatorios no cambian: para una misma semilla el dataset es
+  idéntico al de la Sección 6 salvo la columna nueva.
+- `entrenador_anticipatorio.py`: `edad_evento` entra en `FEATURES_BASE`; el modelo
+  exportado es fijo (`MODELO_ELEGIDO = ('RandomForest', True)`). La comparación de las 6
+  configuraciones se sigue calculando y guardando, e imprime qué habrían elegido los
+  criterios por semilla (menor RMSE con evento y menor RMSE global), solo como auditoría.
+- `experimento_semillas.py`: 30 semillas; el bootstrap reporta IC 95% del ahorro y de
+  las pérdidas de cada sistema, de la diferencia de ahorro y de pérdidas entre
+  anticipatorio y reactivo, y las probabilidades bootstrap de que el anticipatorio ahorre
+  más y pierda menos. Se guarda en `modelos/resultados_semillas_bootstrap.csv`. La
+  estabilidad de la selección se reporta como conteo de ganadores por semilla.
+- Se regeneró el pipeline por defecto (semilla 42): dataset, `modelos/modelo_anticipatorio.pkl`
+  (ahora RandomForest + línea/tramo) e `importancia_variables.png`.
+
+### 7.1 Criterio de selección del modelo
+
+**Decisión:** el modelo exportado es siempre **RandomForest + línea/tramo**; ya no se elige
+por semilla.
+
+**Justificación.** El criterio anterior (menor RMSE con evento en la validación por días)
+se decidía con 13–25 filas con evento por semilla, y con 5 semillas eligió 4 modelos
+distintos (Sección 6.4). Con 30 semillas la inestabilidad se confirma: el ganador por RMSE
+con evento se reparte entre las 6 configuraciones (HistGB sin ubicación 8, GB + línea/tramo
+6, HistGB + línea/tramo 6, RF + línea/tramo 4, GB sin ubicación 4, RF sin ubicación 2). Un
+criterio que elige casi al azar no sirve para el capítulo de metodología. Se fija la
+configuración que ganó en el agregado de la Sección 6.4, y la comparación se sigue
+reportando para auditarla.
+
+**Contraste con 30 semillas** (validación por días agregada; 933 filas con evento, contra
+89 con 5 semillas):
+
+| Configuración | RMSE global (media por semilla) | MAE global | MAE evento | RMSE evento (agregado) |
+|---|---|---|---|---|
+| HistGradientBoosting + línea/tramo | 0.0963 | 0.0063 | 0.489 | **1.085** |
+| HistGradientBoosting (sin ubicación) | 0.1054 | 0.0067 | 0.512 | 1.099 |
+| **RandomForest + línea/tramo** (elegido) | 0.0743 | **0.0034** | 0.511 | 1.179 |
+| RandomForest (sin ubicación) | **0.0735** | **0.0034** | 0.522 | 1.193 |
+| GradientBoosting + línea/tramo | 0.0743 | 0.0043 | **0.488** | 1.230 |
+| GradientBoosting (sin ubicación) | 0.0740 | 0.0042 | 0.515 | 1.265 |
+
+Ganador por semilla con menor RMSE global: RF sin ubicación 14, GB sin ubicación 5, GB +
+línea/tramo 5, RF + línea/tramo 3, HistGB + línea/tramo 3.
+
+Lectura:
+
+1. **La conclusión de la Sección 6.4 tampoco se sostiene del todo con 30 semillas.** En el
+   RMSE con evento ahora gana HistGB + línea/tramo (1.085 vs. 1.179 del elegido, −8%), pero
+   a cambio de un RMSE global 30% peor (0.096 vs. 0.074) y casi el doble de MAE global,
+   error que viene de las filas sin evento (99.8% del dataset). El orden entre familias
+   cambia según la métrica y las diferencias dentro de cada familia son pequeñas.
+2. **Se mantiene RandomForest + línea/tramo** porque queda en el grupo de menor error
+   global (a 1% de RF sin ubicación, diferencia menor que la variación entre semillas),
+   tiene el menor MAE y es el mejor de ese grupo en RMSE con evento. Elegir por RMSE global
+   puro daría RF sin ubicación, prácticamente equivalente (+1% RMSE con evento).
+3. **Queda documentado como decisión abierta:** si el objetivo del prototipo es solo
+   rutear en horas con evento, HistGB + línea/tramo es candidato. El experimento de
+   ruteo con 30 semillas se hizo con RF + línea/tramo; no se repitió con HistGB.
+
+### 7.2 Métricas del modelo exportado (semilla 42)
+
+RandomForest + línea/tramo con `edad_evento`, entrenado con el 80% inicial. En el 20% final:
+MAE 0.0047 min, RMSE 0.1209 min; en las 13 filas con evento: MAE 1.325 min, RMSE 2.564
+min. Importancia por permutación: `congestibilidad_t` 0.0436, `tramo_congestion_media`
+0.0037, `linea` 0.0014, `severidad_evento` 0.0012, `congestibilidad_t_minus_1` 0.0005,
+`hora` 0.0002, `edad_evento` 0.0001; el resto ≈ 0. El caso de prueba Pantitlán →
+Auditorio (2026-01-13, 7:00) no cambia: la IA mantiene la ruta estática (37.96 min reales).
+
+### 7.3 Resultados con 30 semillas: ruteo
+
+258 horas con evento en días no vistos, **525,446 casos O-D** (antes 39 horas y 82,784
+casos). Solo **53 horas** tienen ahorro posible > 0.5 min. Bootstrap por conglomerados
+(5,000 repeticiones sobre horas con evento completas):
+
+| Sistema | Ahorro total (min) [IC 95%] | Pérdidas totales (min) [IC 95%] | Cambios de ruta | % del ahorro posible [IC 95%] |
+|---|---|---|---|---|
+| Reactivo | 20,154 [−16,622; 57,996] | −29,024 [−50,965; −12,320] | 33,953 | 40.9 [−66.0; 78.8] |
+| Anticipatorio (IA) | 23,494 [6,434; 43,875] | **−5,483 [−9,744; −2,433]** | 16,233 | **47.7 [23.2; 67.6]** |
+| Oráculo | 49,224 [21,000; 81,549] | 0 | 19,527 | 100 |
+
+| Comparación anticipatorio − reactivo | Puntual | IC 95% | Probabilidad bootstrap |
+|---|---|---|---|
+| Diferencia de ahorro total | +3,340 min | [−21,618; 28,904] | **60%** de que la IA ahorre más |
+| Diferencia de pérdidas | +23,542 min | [7,993; 44,024] | **100%** de que la IA pierda menos |
+
+Por semilla, la IA ahorra más que el reactivo en 18 de 30. En las 5 semillas originales
+los totales casi no cambian respecto a la Sección 6.5 (IA 6,307 vs. 6,400 min; pérdidas
+−577 vs. −598), y las 25 semillas nuevas repiten el patrón (IA 17,187 vs. reactivo
+14,587; pérdidas −4,906 vs. −17,955).
+
+Lectura:
+
+1. **Resultado robusto, ahora con IC: la IA pierde 5.3 veces menos que el reactivo**
+   (−5,483 vs. −29,024 min) y el IC de la diferencia excluye el 0. Con más semillas el
+   cociente baja de 18× a 5.3×: el 18× de la Sección 6.5 venía de pocas horas.
+2. **La IA es el único sistema con % de ahorro capturado significativamente positivo**
+   (47.7%, IC [23.2; 67.6]). El IC del reactivo incluye valores muy negativos: según qué
+   horas toquen, empeora al usuario en neto.
+3. **La ventaja en ahorro total sigue sin ser significativa** (probabilidad 60%, antes
+   54%). Sextuplicar la muestra no la resolvió; la causa es la estructura, no el tamaño:
+   - En las 53 horas con ahorro posible, el **reactivo gana en 38**, la IA en 9 (6
+     empates): mientras la disrupción persiste, reaccionar capta más (37,044 vs. 28,010
+     min).
+   - En las 205 horas sin ahorro posible (el incidente ya terminó o no abre alternativa),
+     el reactivo pierde −16,889 min y la IA −4,516.
+
+   El balance neto depende de cuántas horas de "incidente que sigue" contra "incidente que
+   acaba" caigan en la muestra, y eso varía mucho entre semillas.
+4. **Para la tesis:** lo defendible es "anticipar reduce el riesgo" (menos pérdidas, %
+   capturado con IC positivo), no "anticipar ahorra más minutos que reaccionar".
+
+### 7.4 Edad del evento: efecto nulo
+
+Ablación sobre los 30 datasets: RandomForest + línea/tramo en validación por días, con y
+sin `edad_evento` (mismos pliegues):
+
+| Segmento | Filas | RMSE sin edad | RMSE con edad |
+|---|---|---|---|
+| Global | 561,000 | 0.0859 | 0.0859 |
+| Con evento | 933 | 1.1790 | 1.1789 |
+| Incidente de plataforma | 194 | 2.581 | 2.581 |
+| Incidente, primera hora (edad 0) | 104 | 2.763 | 2.757 |
+| Incidente, edad ≥ 1 | 90 | 2.354 | 2.362 |
+
+Persistencia observada de los incidentes y predicción media del modelo:
+
+| Edad (h) | Filas | Sigue activo en t+1 | Retraso real medio en t+1 | Predicción media sin edad | Predicción media con edad |
+|---|---|---|---|---|---|
+| 0 | 104 | 39% | 1.85 | 1.86 | 1.87 |
+| 1 | 58 | 29% | 1.33 | 0.97 | 1.03 |
+| 2 | 27 | 15% | 0.35 | 0.61 | 0.61 |
+| 3 | 5 | 0% | 0.00 | 0.21 | 0.23 |
+
+("Sigue activo" = retraso real en t+1 > 1 min.)
+
+Lectura:
+
+1. **La variable no aporta nada** (importancia 0.0001; RMSE idéntico). La información ya
+   estaba en el modelo: la predicción baja con la edad aun sin `edad_evento`, porque
+   `congestibilidad_t_minus_1` distingue un incidente que acaba de empezar (t−1 sin
+   retraso) de uno que ya llevaba una hora. Las gradaciones restantes (edad 1 vs. 2 vs. 3)
+   tendrían que aprenderse de solo ~19 filas de incidente por semilla.
+2. **La hipótesis de la Sección 6.6 era incorrecta.** La IA no pierde contra el reactivo por
+   no saber cuánto lleva el incidente: su predicción media ya está calibrada (1.87 vs. 1.85
+   en la primera hora). Pierde porque predice el **valor esperado**: con 39% de
+   probabilidad de que el incidente siga, el retraso esperado rara vez supera el costo del
+   desvío, y la IA no cambia de ruta. El reactivo supone continuidad al 100%: gana cuando
+   el incidente sigue y pierde cuando acaba. Para el usuario promedio el valor esperado es
+   el criterio correcto (por eso pierde menos). Capturar más ahorro requeriría información
+   que el simulador no expone (duración anunciada del cierre) o un criterio de decisión
+   distinto del valor esperado.
+3. Se conserva `edad_evento` en el modelo: no empeora y sería relevante con duraciones más
+   largas o datos reales de incidentes.
+
+### 7.5 Siguiente paso
+
+Pendiente de definir. Candidatos que salen de esta sección:
+
+- Probar un aviso de duración estimada del cierre (en el simulador, una estimación ruidosa
+  de `duracion` visible en t) para medir cuánto vale esa información para el ruteo.
+- Repetir el ruteo de 30 semillas con HistGB + línea/tramo (mejor RMSE con evento) para
+  cerrar la decisión abierta de la Sección 7.1.
+- Atender las limitaciones #4 (horizonte sub-horario) y #5 (perfiles O-D) de la Sección 3.
 
 ---
 
@@ -811,19 +992,18 @@ modelo tenga suficientes ejemplos de eventos disruptivos que aprender.
 ## Mensaje de commit
 
 ```
-feat: capacidad por linea, suspension de tramos, tasas calibradas y multi-semilla
+feat: modelo fijo, 30 semillas y edad del evento
 
-- simulador_congestion.py: capacidad por sentido y linea (parque vehicular,
-  disponibilidad e intervalo minimo del STC) y V/C con el sentido mas cargado;
-  incidente_plataforma suspende el tramo (retraso 30*s^2 min); tasas calibradas
-  (desalojos STC 2018-2022, dias con lluvia SMN Tacubaya) con lluvia como un
-  episodio correlacionado entre lineas de superficie; --semilla/--salida;
-  zip en vez de iterrows (5.3 -> 1.5 min, misma carga).
-- entrenador_anticipatorio.py, ruteo_anticipatorio.py: rutas por argumento;
-  el ruteo guarda un resumen.
-- experimento_semillas.py: pipeline con 5 semillas y bootstrap por horas con
-  evento. La IA pierde 18x menos que el reactivo (-598 vs -11,070 min), pero
-  su ventaja en ahorro total no es significativa (P = 54%); la seleccion de
-  modelo cambia entre semillas (agregado: RandomForest + linea/tramo).
-- avances.md: seccion 6.
+- entrenador_anticipatorio.py: el modelo exportado es fijo (RandomForest +
+  linea/tramo, MODELO_ELEGIDO); la seleccion por RMSE con evento de cada
+  semilla era ruido (30 semillas: 6 ganadores distintos). Nueva feature
+  edad_evento.
+- simulador_congestion.py: guarda edad_evento (horas desde hora_inicio, -1 sin
+  evento); la duracion no se expone. Mismos sorteos que antes.
+- experimento_semillas.py: 30 semillas; bootstrap con IC de ahorro y perdidas
+  por sistema y probabilidad de que la IA pierda menos. La IA pierde 5.3x
+  menos que el reactivo (IC de la diferencia excluye 0) y captura 47.7%
+  [23.2; 67.6] del ahorro posible; su ventaja en ahorro total sigue sin ser
+  significativa (P = 60%). edad_evento no aporta (ablacion: RMSE identico).
+- avances.md: seccion 7; bloques de prompt reescritos como bitacora.
 ```

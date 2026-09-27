@@ -15,11 +15,14 @@ from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 import pandas as pd
 
-SEMILLAS = [42, 7, 13, 101, 2026]
+# Las 5 semillas originales + 25 nuevas: con eventos raros, 5 semillas dejaban solo ~12
+# horas con incidentes de impacto y la comparación de sistemas no era concluyente.
+SEMILLAS = [42, 7, 13, 101, 2026] + list(range(1001, 1026))
 CORRIDAS_EN_PARALELO = 3
 DIRECTORIO_SALIDA = "datos_procesados/semillas"
 ARCHIVO_RESULTADOS_RUTEO = "modelos/resultados_semillas_ruteo.csv"
 ARCHIVO_RESULTADOS_MODELOS = "modelos/resultados_semillas_modelos.csv"
+ARCHIVO_BOOTSTRAP = "modelos/resultados_semillas_bootstrap.csv"
 
 def rutas_semilla(semilla):
     base = os.path.join(DIRECTORIO_SALIDA, f"semilla_{semilla}")
@@ -88,9 +91,13 @@ def agregar_ruteo():
     def estadisticos(muestra):
         total = muestra.sum()
         res = {}
+        for s in SISTEMAS:
+            res[f'ahorro_{s}'] = total[f'ahorro_{s}']
+            res[f'perdida_{s}'] = total[f'perdida_{s}']
         for s in ['reactivo', 'anticipatorio']:
             res[f'pct_capturado_{s}'] = 100 * total[f'ahorro_{s}'] / total['ahorro_oraculo']
         res['diferencia_min'] = total['ahorro_anticipatorio'] - total['ahorro_reactivo']
+        res['diferencia_perdida_min'] = total['perdida_anticipatorio'] - total['perdida_reactivo']
         return res
 
     puntual = estadisticos(por_hora)
@@ -109,11 +116,18 @@ def agregar_ruteo():
     for s in SISTEMAS:
         print(f"{s}: ahorro total {por_hora[f'ahorro_{s}'].sum():.1f} min, pérdidas {por_hora[f'perdida_{s}'].sum():.1f} min, "
               f"cambios de ruta {int(por_hora[f'cambio_ruta_{s}'].sum())}")
+    filas_ic = []
     for clave, valor in puntual.items():
         bajo, alto = df_boot[clave].quantile([0.025, 0.975])
+        filas_ic.append({'estadistico': clave, 'puntual': valor, 'ic95_bajo': bajo, 'ic95_alto': alto})
         print(f"{clave}: {valor:.1f} [IC 95% bootstrap: {bajo:.1f}, {alto:.1f}]")
-    print(f"Probabilidad bootstrap de que el anticipatorio ahorre más que el reactivo: "
-          f"{100 * (df_boot['diferencia_min'] > 0).mean():.0f}%")
+    prob_ahorro = 100 * (df_boot['diferencia_min'] > 0).mean()
+    prob_perdida = 100 * (df_boot['diferencia_perdida_min'] > 0).mean()
+    print(f"Probabilidad bootstrap de que el anticipatorio ahorre más que el reactivo: {prob_ahorro:.0f}%")
+    print(f"Probabilidad bootstrap de que el anticipatorio pierda menos que el reactivo: {prob_perdida:.0f}%")
+    filas_ic.append({'estadistico': 'prob_anticipatorio_ahorra_mas', 'puntual': prob_ahorro})
+    filas_ic.append({'estadistico': 'prob_anticipatorio_pierde_menos', 'puntual': prob_perdida})
+    pd.DataFrame(filas_ic).to_csv(ARCHIVO_BOOTSTRAP, index=False)
     return por_hora
 
 def agregar_modelos():
@@ -137,11 +151,11 @@ def agregar_modelos():
     print("\n=== Modelos: validación por días, agregada sobre todas las semillas ===")
     print(agregado.drop(columns='se_evento').sort_values('RMSE_evento_agregado').round(4).to_string())
 
-    elegidos = []
-    for semilla in SEMILLAS:
-        v = validacion[validacion['semilla'] == semilla]
-        elegidos.append(v.loc[v['RMSE_evento'].idxmin(), 'configuracion'])
-    print("\nModelo elegido por semilla:", dict(zip(SEMILLAS, elegidos)))
+    # Estabilidad de los criterios de selección por semilla (el modelo exportado es fijo)
+    for criterio in ('RMSE_evento', 'RMSE'):
+        ganadores = validacion.loc[validacion.groupby('semilla')[criterio].idxmin(), 'configuracion']
+        print(f"\nGanador por semilla con menor {criterio}:")
+        print(ganadores.value_counts().to_string())
     return df_modelos
 
 if __name__ == "__main__":

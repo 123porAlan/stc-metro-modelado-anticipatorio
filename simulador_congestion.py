@@ -92,7 +92,7 @@ def capacidad_tramo(u, v):
 # ====================================================================================
 # GENERADOR DE EVENTOS ESTOCÁSTICOS
 # ====================================================================================
-# Tasas calibradas con fuentes públicas (ver avances.md, Sección 6.1). Siguen siendo una
+# Tasas calibradas con fuentes públicas (ver avances.md, Sección 6.3). Siguen siendo una
 # aproximación documentada, no una calibración estadística rigurosa.
 TIPOS_EVENTO = ["lluvia", "falla_mecanica", "incidente_plataforma"]
 
@@ -294,6 +294,10 @@ for _, fila_manifiesto in df_manifiesto.iterrows():
                     info_tramos_hora[k] = {
                         'tipo_evento': evento['tipo_evento'],
                         'severidad': evento['severidad'],
+                        # Edad del evento: horas desde que empezó (0 en su primera hora).
+                        # Solo usa hora_inicio, que sería observable en tiempo real; la
+                        # duración NO se expone al modelo (no se conoce hasta que termina).
+                        'edad': hora - evento['hora_inicio'],
                     }
         info_eventos_por_hora[hora] = info_tramos_hora
 
@@ -346,6 +350,7 @@ for _, fila_manifiesto in df_manifiesto.iterrows():
             hay_evento = int(info_evento is not None)
             tipo_evento = info_evento['tipo_evento'] if info_evento else 'ninguno'
             severidad_evento = round(info_evento['severidad'], 4) if info_evento else 0.0
+            edad_evento = info_evento['edad'] if info_evento else -1  # -1 = sin evento
 
             datos_ml.append({
                 'fecha': dia_simulacion,
@@ -362,6 +367,7 @@ for _, fila_manifiesto in df_manifiesto.iterrows():
                 'hay_evento': hay_evento,
                 'tipo_evento': tipo_evento,
                 'severidad_evento': severidad_evento,
+                'edad_evento': edad_evento,
                 'target_congestibilidad_t_plus_1': congest_futura,
             })
 

@@ -25,6 +25,9 @@ FEATURES_BASE = [
     'congestibilidad_t_minus_1',
     'hay_evento',
     'severidad_evento',
+    # Horas desde que empezó el evento del tramo (-1 sin evento). Permite aprender la
+    # persistencia de los incidentes: qué tan probable es que sigan activos en t+1.
+    'edad_evento',
 ]
 
 # Suavizado del target encoding de 'tramo': un tramo con pocas observaciones se acerca a
@@ -34,6 +37,13 @@ SUAVIZADO_TRAMO = 20
 # Número de días finales usados como pliegues de validación "rolling origin":
 # para cada uno se entrena con TODOS los días anteriores y se evalúa solo en ese día.
 DIAS_VALIDACION = 5
+
+# Configuración fija del modelo exportado (ver avances.md, Sección 7.1). Con tasas de
+# eventos calibradas cada semilla deja ~20 filas con evento en la validación por días y
+# elegir por RMSE en esas filas cambió de ganador en 4 de 5 semillas: el criterio era
+# ruido. Se fija la configuración que ganó en el agregado multi-semilla (RMSE global y
+# con evento). La comparación de candidatos se sigue reportando para auditar la elección.
+MODELO_ELEGIDO = ('RandomForest', True)
 
 CANDIDATOS = {
     'RandomForest': lambda: RandomForestRegressor(
@@ -195,12 +205,13 @@ def comparar_modelos(df, archivo_comparacion=ARCHIVO_COMPARACION):
     pd.DataFrame(resultados_split + resultados_validacion).to_csv(archivo_comparacion, index=False)
     print(f"\n   [OK] Comparación guardada en: {archivo_comparacion}")
 
-    # Criterio de selección: menor RMSE en filas con evento en la validación por días.
-    # Es el segmento que el ruteo anticipatorio necesita predecir bien (los picos de
-    # retraso), y la validación por días es la estimación con más muestras de evento.
-    mejor = min(resultados_validacion, key=lambda r: r['RMSE_evento'])
-    print(f"   [OK] Seleccionado: {nombre_configuracion(mejor['modelo'], mejor['usar_geo'])}")
-    return mejor['modelo'], mejor['usar_geo'], df_train, df_test
+    # Solo informativo: qué habrían elegido los criterios por semilla.
+    for criterio in ('RMSE_evento', 'RMSE'):
+        mejor = min(resultados_validacion, key=lambda r: r[criterio])
+        print(f"   Menor {criterio} en esta semilla: {nombre_configuracion(mejor['modelo'], mejor['usar_geo'])}")
+    nombre_modelo, usar_geo = MODELO_ELEGIDO
+    print(f"   [OK] Seleccionado (fijo): {nombre_configuracion(nombre_modelo, usar_geo)}")
+    return nombre_modelo, usar_geo, df_train, df_test
 
 def entrenar_modelo_final(df_train, df_test, nombre_modelo, usar_geo):
     """Entrena el modelo elegido con el 80% inicial y lo evalúa en el 20% final. No se
