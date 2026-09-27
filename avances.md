@@ -2,7 +2,7 @@
 
 **Alumno:** Alan Bellon García
 **Asesor:** M. en Fil. C. Enrique Francisco Soto Astorga
-**Fecha de este reporte:** 2026-09-13
+**Fecha de este reporte:** 2026-09-27 (actualizado — ver [Sección 4](#4-extensión-multi-día--eventos-estocásticos-2026-09-27))
 
 Este documento resume el estado técnico y metodológico del prototipo descrito en el
 anexo de titulación (*"Modelado y prototipado de un sistema de Inteligencia Artificial
@@ -16,7 +16,7 @@ de México"*), con base en el código y los datos actualmente presentes en
 
 | Objetivo secundario (Anexo) | Estado | Evidencia en código |
 |---|---|---|
-| Generar dataset sintético de afluencia/disrupciones | ✅ Completo (versión inicial, un solo día simulado) | `generador_sintetico_horario.py`, `datos_procesados/*.csv` |
+| Generar dataset sintético de afluencia/disrupciones | ✅ Completo (14 días sintéticos, laboral+fin de semana, eventos estocásticos) | `generador_sintetico_horario.py`, `simulador_congestion.py`, `datos_procesados/*.csv` |
 | Representar la red como grafo con pesos | ✅ Completo | `grafo_metro.py` → `grafo_base_metro.gexf` |
 | Modelo de estimación a horizonte corto (10–60 min) | ⚠️ Parcial (horizonte discreto de 1 hora, no continuo 10-60 min) | `entrenador_anticipatorio.py` → `modelos/modelo_anticipatorio_rf.pkl` |
 | Algoritmo de ruteo que integre la métrica predictiva | ✅ Prueba de concepto funcional | `ruteo_anticipatorio.py` |
@@ -91,8 +91,13 @@ largos conocidos (p. ej. Ciudad Azteca, La Raza, Tacubaya).
 - **Matriz Origen-Destino sintética** vía modelo gravitacional simplificado: calcula
   `atractividad_destino` según hora y perfil, normaliza por estación de origen y reparte
   las entradas reales observadas como viajes probables a cada destino.
-- Output: `entradas_sinteticas_horarias.csv` y `matriz_od_sintetica_2026-01-13.csv`
-  (actualmente **un solo día simulado**, `2026-01-13`).
+- **[Actualizado 2026-09-27]** Parametrizado por `DIAS_SIMULACION` (lista de fechas, hoy
+  14 días de enero 2026). Cada fecha se etiqueta `laboral`/`fin_de_semana` según su día
+  de la semana; el fin de semana usa un perfil horario derivado programáticamente del
+  laboral (aplanado de picos + desplazamiento de actividad a mediodía/tarde), no una
+  segunda tabla de constantes inventada. Genera una `matriz_od_sintetica_<fecha>.csv`
+  por día y un `manifiesto_dias_simulados.csv` (fecha, tipo_dia, archivo) que
+  `simulador_congestion.py` consume para no duplicar la lista de días entre scripts.
 
 ### 2.3 `simulador_congestion.py` — Motor de estrés dinámico
 - Carga el grafo base y la matriz O-D del día simulado.
@@ -104,17 +109,32 @@ largos conocidos (p. ej. Ciudad Azteca, La Raza, Tacubaya).
   T_c = T_b × (1 + α·(V/C)^β), α=0.15, β=4, tope en 4×T_b
 
   con `CAPACIDAD_PROMEDIO_TRAMO_HORA = 35000` (constante única para toda la red).
-- **Inyección de disrupción determinista**: entre 7–9h, cualquier arista cuyo nodo
-  contenga el string `"B_0200L9"` recibe +40,000 pasajeros fantasma para simular una
-  falla de Línea 9. Esto es un evento *hardcodeado*, no estocástico.
-- Construye ventanas temporales (t-1, t, t+1) de `congestibilidad` por tramo y exporta
-  `dataset_features_entrenamiento.csv` (3,740 registros) como tabla de entrenamiento.
+- **[Actualizado 2026-09-27] Generador de eventos estocásticos** (reemplaza la
+  inyección determinista de Línea 9): por cada (hora, línea, tipo de evento) del día se
+  sortea ocurrencia con un proceso de Poisson (tasa base modulada por hora pico y, para
+  lluvia, por temporada de lluvias), y si ocurre, severidad (Beta(2,5), sesgada a
+  eventos leves) y duración (1-4 horas). `lluvia` afecta toda una línea de superficie
+  (A/B/12); `falla_mecanica` e `incidente_plataforma` afectan un tramo puntual de
+  cualquier línea. El efecto se sigue expresando como carga fantasma sobre la fórmula
+  BPR (no se escribe en `carga_pasajeros_red`, que queda como ridership real limpio), y
+  además se registra explícitamente en el dataset vía `hay_evento`/`tipo_evento`/
+  `severidad_evento`.
+- El ruteo ya no recalcula `nx.shortest_path` por cada fila de la matriz O-D y por cada
+  hora: como el peso de ruteo (`tiempo_minutos`) es estático, la ruta de cada par
+  origen-destino se calcula una sola vez y se cachea (necesario para que escalar a 14
+  días fuera viable en tiempo razonable: ~5.5 min totales en vez de ~14× el tiempo de un
+  solo día).
+- Construye ventanas temporales (t-1, t, t+1) de `congestibilidad` por tramo (sin fugar
+  información entre días) y exporta `dataset_features_entrenamiento.csv`, ahora con
+  **52,360 registros** de 14 días (antes 3,740 de un solo día).
 
 ### 2.4 `entrenador_anticipatorio.py` — Modelo predictivo
 - Ordena cronológicamente y separa train/test 80/20 **sin aleatorizar** (evita fuga de
   información temporal).
-- Features: `hora`, `tiempo_ideal`, `congestibilidad_t`, `congestibilidad_t_minus_1`.
-  Target: `target_congestibilidad_t_plus_1`.
+- Features: `hora`, `tiempo_ideal`, `congestibilidad_t`, `congestibilidad_t_minus_1` y,
+  **[2026-09-27]** cuando el dataset trae contexto de eventos: `hay_evento`,
+  `severidad_evento` y dummies one-hot de `tipo_evento` (necesarias porque
+  `RandomForestRegressor` no acepta texto). Target: `target_congestibilidad_t_plus_1`.
 - `RandomForestRegressor` (150 árboles, profundidad 10) evaluado con MAE/RMSE.
 - Genera gráfica de importancia de variables (`importancia_variables.png`) como primer
   paso de explicabilidad.
@@ -133,13 +153,15 @@ largos conocidos (p. ej. Ciudad Azteca, La Raza, Tacubaya).
 
 ## 3. Limitaciones metodológicas actuales (a atender antes de tesis final)
 
-1. **Un solo día de simulación** (`2026-01-13`): el dataset de entrenamiento no captura
-   variabilidad día-a-día (fin de semana vs. entre semana, quincena, clima), lo cual
-   restringe la capacidad de generalización del modelo y hace que el split 80/20
-   temporal, en la práctica, separe *horas* dentro del mismo día, no días distintos.
-2. **Evento de disrupción hardcodeado**: la falla de Línea 9 es determinista (mismas
-   horas, mismo tramo, misma magnitud siempre), no un proceso estocástico. El modelo no
-   ha visto variabilidad de tipo, ubicación, intensidad o duración de disrupciones.
+1. ~~**Un solo día de simulación**~~ **RESUELTO 2026-09-27** (ver [Sección 4](#4-extensión-multi-día--eventos-estocásticos-2026-09-27)):
+   ahora se simulan 14 días (10 laborales + 4 de fin de semana), y el split 80/20
+   cronológico separa *días* completos (12 de entrenamiento, 3 de prueba, con 1 día
+   compartido en la frontera del corte), no horas dentro del mismo día.
+2. ~~**Evento de disrupción hardcodeado**~~ **RESUELTO 2026-09-27**: la falla fija de
+   Línea 9 fue reemplazada por un generador de eventos estocásticos (lluvia, falla
+   mecánica, incidente de plataforma) con tasas tipo Poisson por hora/línea/temporada y
+   severidad/duración muestreadas. Queda pendiente calibrar esas tasas contra fuentes
+   reales (ver Sección 4.4).
 3. **Capacidad constante para toda la red** (`35000` pasajeros/hora): no diferencia
    tramos troncales de alta capacidad (Línea 1, 2, 3) de tramos periféricos.
 4. **Horizonte de predicción discretizado a 1 hora**, mientras el objetivo de la tesis
@@ -154,28 +176,106 @@ quedar como candidatos directos para la siguiente fase.
 
 ---
 
-## Siguiente paso
+## 4. Extensión multi-día + eventos estocásticos (2026-09-27)
+
+Esta sección documenta la ejecución del prompt de la sesión anterior (ver historial de
+commits). Cambios de código:
+
+- `generador_sintetico_horario.py`: parametrizado por `DIAS_SIMULACION` (14 fechas de
+  enero 2026), perfil horario laboral/fin de semana por `tipo_dia`, una matriz O-D por
+  día y un `manifiesto_dias_simulados.csv` de salida. También se restringió el
+  histórico fuente a solo los días simulados (antes desagregaba las ~1,857 fechas del
+  CSV completo a nivel hora sin usarlas después: un archivo intermedio de ~300 MB para
+  un solo día útil).
+- `simulador_congestion.py`: lee el manifiesto y simula los 14 días en un solo run;
+  reemplaza la falla fija de Línea 9 por el generador de eventos estocásticos
+  (Poisson por hora/línea/tipo, severidad Beta(2,5), duración 1-4h); cachea rutas
+  estáticas por par origen-destino (el cuello de botella real al escalar a varios
+  días); agrega `tipo_dia`, `hay_evento`, `tipo_evento`, `severidad_evento` al dataset.
+- `entrenador_anticipatorio.py`: si el dataset trae columnas de evento, las agrega como
+  features (`hay_evento`, `severidad_evento`, dummies de `tipo_evento`).
+
+### 4.1 Dataset resultante
+
+| | Versión anterior (1 día, evento determinista) | Versión actual (14 días, eventos estocásticos) |
+|---|---|---|
+| Registros | 3,740 | 52,360 |
+| Días distintos | 1 | 14 (10 laborales, 4 fin de semana) |
+| Filas con evento activo | ~ desconocido (no etiquetado) | 870 (1.66%): 707 lluvia, 94 incidente de plataforma, 69 falla mecánica |
+| Split train/test (80/20 cronológico) | Mismo día en train y test (fuga temporal de facto) | 12 días train / 3 días test (1 día compartido en la frontera del corte) |
+| Tiempo de generación (`simulador_congestion.py`) | segundos | ~5.5 min (14 días, con caché de rutas) |
+
+### 4.2 Cambio en MAE / RMSE
+
+| Métrica | Baseline (1 día, sin eventos aleatorios) | Nuevo (14 días, eventos estocásticos) | Δ |
+|---|---|---|---|
+| MAE (min) | 0.0000109 | 0.0028 | ×256 |
+| RMSE (min) | 0.000233 | 0.0313 | ×134 |
+
+**Lectura correcta de este resultado: el error subió, y eso es lo esperado y lo
+correcto, no una regresión del modelo.** El baseline de 1 día tenía una fuga temporal
+de facto — el split 80/20 separaba *horas* del mismo día con el mismo patrón de falla
+recurrente (L9, 7-9am, todos los días idéntico), así que el modelo memorizaba
+trivialmente el patrón y el error caía a prácticamente cero (MAE ≈ 10⁻⁵ min, una
+precisión sin sentido físico). Con 14 días y eventos verdaderamente estocásticos
+(distintos tipos, tramos, horas, severidades y duraciones cada día), el modelo debe
+generalizar de 12 días vistos a 3 días no vistos con eventos nuevos que nunca ocurrieron
+exactamente igual en entrenamiento. Un MAE de ~0.003 min y RMSE de ~0.031 min sobre un
+target cuyo rango va de 0 a 6.09 min (media 0.015, con el 75% de los tramos en 0 —
+la red solo se congestiona en tramos/horas puntuales) es un desempeño razonable para un
+primer modelo con features todavía limitadas (no incluye, por ejemplo, la línea/tramo
+como variable categórica). Esto también resuelve la limitación #1 de la Sección 3: el
+split ahora separa días reales, no horas del mismo día.
+
+Importancia de variables (nuevo modelo): `congestibilidad_t` (50.3%) y `hora` (41.9%)
+siguen dominando; el bloque de variables de evento (`severidad_evento`,
+`hay_evento`, dummies de `tipo_evento`) aporta en conjunto ~1.9% — señal débil pero
+presente, consistente con que solo 1.66% de las filas tienen evento activo. Ampliar esa
+señal (más días, o sobremuestrear horas con evento) es candidato directo para la
+siguiente iteración si se quiere que el modelo dependa más del contexto de eventos y
+menos de la inercia (`congestibilidad_t`).
+
+### 4.3 Supuestos de simulación explícitos (para citar en el capítulo de metodología)
+
+- Ventana de 14 días naturales de enero 2026 (única franja con datos reales completos
+  en el CSV fuente); no hay quincena ni variación mensual/estacional real en la muestra,
+  solo la distinción laboral/fin de semana.
+- Perfil horario de fin de semana derivado programáticamente del laboral (aplanado +
+  desplazamiento a mediodía/tarde), no calibrado con datos reales de fin de semana.
+- Tasas de eventos (Poisson), factores de hora pico/temporada de lluvias y factores de
+  impacto por tipo de evento son **ilustrativos**, no una calibración estadística sobre
+  incidencia real del STC (ver Sección "Análisis de factibilidad técnica" más abajo,
+  que ya anticipaba este punto y sigue vigente para la siguiente iteración).
+
+### 4.4 Siguiente paso
 
 > **Prompt listo para usar en la siguiente sesión de trabajo:**
 >
-> "Extiende `simulador_congestion.py` para generar múltiples días de simulación
-> (mínimo 7–14 días sintéticos, variando entre perfil laboral y fin de semana) en
-> lugar de un solo día fijo (`2026-01-13`). Refactoriza `generador_sintetico_horario.py`
-> para parametrizar el día de simulación y producir una matriz O-D por cada día
-> generado. Luego, sustituye la inyección de disrupción determinista (falla fija de
-> Línea 9 entre 7-9am) por un **generador de eventos estocásticos** parametrizado por
-> tipo de evento (lluvia, falla mecánica, incidente de plataforma), con probabilidad de
-> ocurrencia por hora/línea/temporada (proceso de Poisson u otra distribución de
-> conteo) y magnitud/duración muestreadas de una distribución realista. Añade columnas
-> de contexto al dataset de entrenamiento (`hay_evento`, `tipo_evento`,
-> `severidad_evento`) para que `entrenador_anticipatorio.py` pueda aprender la relación
-> entre eventos estocásticos y congestión futura, y reentrena el modelo con el dataset
-> ampliado. Reporta el cambio en MAE/RMSE frente a la versión actual de un solo día sin
-> eventos aleatorios."
+> "El dataset de entrenamiento ya tiene 14 días con eventos estocásticos, pero la señal
+> de evento (`hay_evento`/`tipo_evento`/`severidad_evento`) solo aporta ~1.9% de
+> importancia porque apenas 1.66% de las filas tienen un evento activo. Antes de
+> calibrar tasas contra fuentes reales, sube la proporción de señal explotable: (1)
+> añade `linea`/`tramo` como variable categórica (dummies o target encoding) para que
+> el modelo pueda aprender qué tramos son estructuralmente más propensos a congestión,
+> ya que hoy el modelo no sabe en qué parte de la red está parado; (2) evalúa si migrar
+> de `RandomForestRegressor` a `GradientBoostingRegressor` (o HistGradientBoosting, que
+> maneja mejor el desbalance de clases raras) mejora la predicción específicamente en
+> las filas con `hay_evento=1` (repórtalo aparte del MAE/RMSE global, ya que hoy ese
+> segmento es <2% de los datos y puede quedar diluido); (3) documenta en `avances.md`
+> una propuesta concreta de fuentes para calibrar `TASA_BASE_LLUVIA`,
+> `TASA_BASE_FALLA_MECANICA` y `TASA_BASE_INCIDENTE_PLATAFORMA` en
+> `simulador_congestion.py` contra datos reales (climatología SMN/Conagua para lluvia;
+> boletines de contingencia o notas de prensa del Metro para fallas/incidentes), aunque
+> sea como aproximación documentada y no como calibración estadística rigurosa."
 
 ---
 
 ## Análisis de factibilidad técnica: eventos estocásticos (lluvia, contingencias/accidentes)
+
+> **Nota (2026-09-27):** el análisis de esta sección ya fue implementado — ver
+> [Sección 4](#4-extensión-multi-día--eventos-estocásticos-2026-09-27). Se conserva
+> completo porque documenta el razonamiento y las fuentes consideradas para calibrar
+> las tasas de eventos, que sigue siendo trabajo pendiente (Sección 4.4).
 
 **Conclusión general: es técnicamente factible y compatible con la arquitectura
 existente, con esfuerzo moderado.** El diseño actual ya separa la "capa de infraestructura"
@@ -250,3 +350,29 @@ estocasticidad sin rediseñar el sistema desde cero.
 nueva infraestructura ni librerías; el trabajo pendiente es principalmente de diseño de
 parámetros (tasas de ocurrencia) y de expandir el dataset a múltiples días para que el
 modelo tenga suficientes ejemplos de eventos disruptivos que aprender.
+
+---
+
+## Mensaje de commit sugerido
+
+```
+feat: simular 14 dias con eventos estocasticos y reentrenar modelo anticipatorio
+
+Reemplaza el dia unico (2026-01-13) y la falla deterministica de Linea 9 por:
+- generador_sintetico_horario.py: parametrizado por DIAS_SIMULACION (14 fechas,
+  laboral/fin de semana), perfil horario de fin de semana derivado del laboral,
+  una matriz O-D por dia y manifiesto_dias_simulados.csv como salida.
+- simulador_congestion.py: generador de eventos estocasticos (lluvia, falla
+  mecanica, incidente de plataforma) via Poisson por hora/linea/temporada,
+  severidad y duracion muestreadas; cache de rutas estaticas por par origen-destino
+  para escalar a multiples dias; agrega hay_evento/tipo_evento/severidad_evento
+  al dataset (52,360 filas vs. 3,740 antes).
+- entrenador_anticipatorio.py: incorpora el contexto de evento como features
+  (dummies de tipo_evento + hay_evento + severidad_evento) cuando estan presentes.
+
+MAE sube de 0.0000109 a 0.0028 min y RMSE de 0.000233 a 0.0313 min frente al
+dataset de un solo dia: el baseline anterior tenia fuga temporal de facto (mismo
+patron de falla, split separaba horas del mismo dia). El split ahora separa dias
+reales (12 train / 3 test) con eventos genuinamente distintos entre si.
+
+```

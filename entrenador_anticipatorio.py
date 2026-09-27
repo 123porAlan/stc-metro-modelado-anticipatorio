@@ -22,18 +22,35 @@ def cargar_y_preparar_datos(ruta_archivo):
     
     return df
 
+def preparar_features_evento(df):
+    """
+    Codifica el contexto de eventos estocásticos (hay_evento, tipo_evento,
+    severidad_evento) como columnas numéricas: hay_evento y severidad_evento ya son
+    numéricas; tipo_evento se expande a dummies porque RandomForestRegressor no acepta
+    texto directamente.
+    """
+    dummies_evento = pd.get_dummies(df['tipo_evento'], prefix='evento')
+    df = pd.concat([df, dummies_evento], axis=1)
+    return df, list(dummies_evento.columns)
+
 def entrenar_modelo(df):
     """Divide los datos, entrena el RandomForest y evalúa su desempeño."""
     print("\n2. Preparando variables y separando Train/Test...")
-    
+
+    tiene_contexto_evento = 'hay_evento' in df.columns
+    if tiene_contexto_evento:
+        df, columnas_evento = preparar_features_evento(df)
+
     target = 'target_congestibilidad_t_plus_1'
     features = [
-        'hora', 
-        'tiempo_ideal', 
-        'congestibilidad_t', 
+        'hora',
+        'tiempo_ideal',
+        'congestibilidad_t',
         'congestibilidad_t_minus_1'
     ]
-    
+    if tiene_contexto_evento:
+        features += ['hay_evento', 'severidad_evento'] + columnas_evento
+
     # Separación Temporal (80% Entrenamiento, 20% Prueba)
     # No usamos train_test_split aleatorio para evitar "Data Leakage" (hacer trampa viendo el futuro)
     split_idx = int(len(df) * 0.8)

@@ -19,19 +19,22 @@ print("3. Cargando contexto actual (Memoria de la red)...")
 # Usaremos el dataset de entrenamiento para simular que leemos los "sensores" actuales del metro
 df_contexto = pd.read_csv("datos_procesados/dataset_features_entrenamiento.csv")
 
-def crear_grafo_futuro(hora_prediccion):
+def crear_grafo_futuro(fecha_prediccion, hora_prediccion):
     """
     Usa la IA para predecir los retrasos y genera el grafo futuro con precisión absoluta.
     """
     G_futuro = G_base.copy()
-    df_hora = df_contexto[df_contexto['hora'] == hora_prediccion].copy()
+    # El dataset trae varios días: filtramos por fecha para no mezclar el tráfico de días distintos
+    df_hora = df_contexto[(df_contexto['fecha'] == fecha_prediccion) & (df_contexto['hora'] == hora_prediccion)].copy()
     
     if df_hora.empty:
-        raise ValueError("No hay datos de contexto para esa hora.")
+        raise ValueError("No hay datos de contexto para esa fecha y hora.")
 
-    # La IA predice el tráfico
-    features = ['hora', 'tiempo_ideal', 'congestibilidad_t', 'congestibilidad_t_minus_1']
-    X_pred = df_hora[features]
+    # La IA predice el tráfico con las mismas features con que fue entrenada
+    # (incluye dummies de tipo_evento; las que no aparezcan en esta hora se rellenan con 0)
+    if 'tipo_evento' in df_hora.columns:
+        df_hora = pd.concat([df_hora, pd.get_dummies(df_hora['tipo_evento'], prefix='evento')], axis=1)
+    X_pred = df_hora.reindex(columns=modelo.feature_names_in_, fill_value=0)
     df_hora['retraso_futuro_predicho'] = modelo.predict(X_pred)
     
     # Inyectamos el tráfico usando los IDs Reales (nodos exactos)
@@ -69,12 +72,13 @@ def imprimir_ruta(G, ruta, nombre_ruta):
 # 🚀 CASO DE PRUEBA: SISTEMA REACTIVO VS ANTICIPATORIO
 # ==========================================
 # Vamos a simular un viaje en HORA PICO MATUTINA (7:00 AM)
+fecha_viaje = "2026-01-13"  # Día laboral del caso de prueba original
 hora_viaje = 7
 origen = "Pantitlán"
 destino = "Auditorio" # Un viaje clásico de periferia a centro laboral
 
-print(f"\nGenerando proyecciones de tráfico para las {hora_viaje}:00 hrs...")
-G_anticipatorio = crear_grafo_futuro(hora_viaje)
+print(f"\nGenerando proyecciones de tráfico para el {fecha_viaje} a las {hora_viaje}:00 hrs...")
+G_anticipatorio = crear_grafo_futuro(fecha_viaje, hora_viaje)
 
 nodo_origen = obtener_id_nodo(G_base, origen)
 nodo_destino = obtener_id_nodo(G_base, destino)
