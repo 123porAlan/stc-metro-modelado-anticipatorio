@@ -32,6 +32,9 @@ VARIANTES = {
     'hgb': {'simulador': [], 'entrenador': ['--configuracion', 'HistGradientBoosting+geo'], 'dataset_de': 'base'},
     'aviso_perfecto': {'simulador': ['--ruido-aviso', '0'], 'entrenador': [], 'dataset_de': None},
     'aviso_ruidoso': {'simulador': ['--ruido-aviso', '0.5'], 'entrenador': [], 'dataset_de': None},
+    # Error aditivo δ ∈ {−1, 0, +1} (ver avances.md, Sección 9): a diferencia del ruido
+    # multiplicativo, puede anunciar 0 cuando el incidente sigue.
+    'aviso_aditivo': {'simulador': ['--error-aviso-aditivo', '1'], 'entrenador': [], 'dataset_de': None},
 }
 
 def archivo_resultados(nombre, variante):

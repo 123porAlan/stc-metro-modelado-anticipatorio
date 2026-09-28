@@ -2,7 +2,7 @@
 
 **Alumno:** Alan Bellon García
 **Asesor:** M. en Fil. C. Enrique Francisco Soto Astorga
-**Fecha de este reporte:** 2026-09-27 (actualizado — ver [Sección 4](#4-extensión-multi-día--eventos-estocásticos-2026-09-27) , [Sección 5](#5-ubicación-en-la-red-comparación-de-modelos-y-evaluación-sistemática-del-ruteo-2026-09-27) , [Sección 6](#6-capacidad-por-línea-suspensión-de-tramos-tasas-calibradas-y-experimento-multi-semilla-2026-09-27) , [Sección 7](#7-selección-fija-de-modelo-30-semillas-y-edad-del-evento-2026-09-27) y [Sección 8](#8-aviso-de-restablecimiento-y-histgb-en-el-ruteo-2026-09-27))
+**Fecha de este reporte:** 2026-09-27 (actualizado — ver [Sección 4](#4-extensión-multi-día--eventos-estocásticos-2026-09-27) , [Sección 5](#5-ubicación-en-la-red-comparación-de-modelos-y-evaluación-sistemática-del-ruteo-2026-09-27) , [Sección 6](#6-capacidad-por-línea-suspensión-de-tramos-tasas-calibradas-y-experimento-multi-semilla-2026-09-27) , [Sección 7](#7-selección-fija-de-modelo-30-semillas-y-edad-del-evento-2026-09-27) , [Sección 8](#8-aviso-de-restablecimiento-y-histgb-en-el-ruteo-2026-09-27) y [Sección 9](#9-aviso-con-error-aditivo-2026-09-27))
 
 Este documento resume el estado técnico y metodológico del prototipo descrito en el
 anexo de titulación (*"Modelado y prototipado de un sistema de Inteligencia Artificial
@@ -20,7 +20,7 @@ de México"*), con base en el código y los datos actualmente presentes en
 | Representar la red como grafo con pesos | ✅ Completo | `grafo_metro.py` → `grafo_base_metro.gexf` |
 | Modelo de estimación a horizonte corto (10–60 min) | ⚠️ Parcial (horizonte discreto de 1 hora, no continuo 10-60 min); comparación de 6 configuraciones; modelo fijo RandomForest + línea/tramo porque la selección por semilla es inestable (Secciones 6.4 y 7.1); HistGB rutea peor (Sección 8.2) | `entrenador_anticipatorio.py` → `modelos/modelo_anticipatorio.pkl` |
 | Algoritmo de ruteo que integre la métrica predictiva | ✅ Prueba de concepto funcional | `ruteo_anticipatorio.py` |
-| Integración estimación + ruteo en prototipo funcional | ⚠️ Evaluado con 30 semillas (258 horas con evento, 525,446 casos O-D): la IA pierde 5.3× menos que el reactivo (IC excluye 0) y captura 47.7% [23.2; 67.6] del ahorro posible, pero su ventaja en ahorro total no es significativa (Sección 7.3). Con aviso de restablecimiento (σ = 0.5) captura 74.2% [59.3; 82.0] y ahorra más que el reactivo con P = 96% (Sección 8) | `ruteo_anticipatorio.py` |
+| Integración estimación + ruteo en prototipo funcional | ⚠️ Evaluado con 30 semillas (258 horas con evento, 525,446 casos O-D): la IA pierde 5.3× menos que el reactivo (IC excluye 0) y captura 47.7% [23.2; 67.6] del ahorro posible, pero su ventaja en ahorro total no es significativa (Sección 7.3). Con aviso de restablecimiento (σ = 0.5) captura 74.2% [59.3; 82.0] y ahorra más que el reactivo con P = 96% (Sección 8), pero con un error de ±1 h en el aviso vuelve a 50.0% y P = 64% (Sección 9) | `ruteo_anticipatorio.py` |
 | Explicabilidad de las recomendaciones | ✅ Iniciado (importancia por permutación, agnóstica al modelo) | `entrenador_anticipatorio.py` → `importancia_variables.png` |
 | Sistema reactivo de comparación (índice 5.5) | ✅ Implementado y comparado: estático vs. reactivo vs. anticipatorio vs. oráculo | `ruteo_anticipatorio.py` |
 
@@ -215,6 +215,9 @@ largos conocidos (p. ej. Ciudad Azteca, La Raza, Tacubaya).
    poco (Sección 7.4). **Actualización (Sección 8):** con el aviso de tiempo estimado de
    restablecimiento como feature, la IA captura 74% del ahorro posible y supera al
    reactivo en ahorro total con P = 96% (IC de dos colas aún incluye 0).
+   **Actualización (Sección 9):** eso solo se sostiene si el aviso acierta casi siempre
+   si el incidente termina en la hora en curso; con un error aditivo de ±1 h la IA vuelve
+   a 50% del ahorro posible y P = 64%.
 7. ~~**Lluvia independiente por línea y sobreestimada**~~ **RESUELTO PARCIALMENTE
    2026-09-27** (Sección 6.3): un episodio por día lluvioso, con probabilidad mensual
    del SMN y correlacionado entre líneas. La hora de inicio (uniforme) y la probabilidad
@@ -1068,6 +1071,8 @@ ruido multiplicativo; con restante 1, el 72% se anuncia exacto y 8% se anuncia 0
    decisión de t+1. **Limitación:** esta robustez es en parte una propiedad del supuesto
    (ruido multiplicativo, que nunca se equivoca en el 0). Un aviso real puede anunciar
    "15 minutos" para un cierre que dura una hora; ese error aditivo no se probó.
+   **Actualización (Sección 9):** se probó; con `δ ∈ {−1, 0, +1}` el aviso pierde casi
+   todo su valor, así que esta robustez sí era un artefacto del supuesto multiplicativo.
 3. **`hgb` no gana a `base` en ahorro pareado ni en pérdidas: se cierra la Sección 7.1
    manteniendo RandomForest + línea/tramo.** HistGB ahorra −2,246 min menos (P de que
    ahorre más = 34%) y pierde −2,660 min más (P de que pierda menos = 3.5%, es decir, 96.5%
@@ -1088,7 +1093,7 @@ ruido multiplicativo; con restante 1, el 72% se anuncia exacto y 8% se anuncia 0
      Sin aviso (`base`), la conclusión de la Sección 7.3 sigue en pie (P = 60%).
    La ventaja en pérdidas se mantiene en todas las variantes (P = 100%, IC excluye 0).
 
-### 8.3 Siguiente paso
+### 8.3 Siguiente paso (punto 1 ejecutado — ver [Sección 9](#9-aviso-con-error-aditivo-2026-09-27))
 
 1. **Probar un aviso con error aditivo** (p. ej. `aviso = max(restante + δ, 0)`,
    `δ ∈ {−1, 0, +1}`), que sí puede anunciar 0 cuando el incidente sigue, para acotar
@@ -1099,6 +1104,118 @@ ruido multiplicativo; con restante 1, el 72% se anuncia exacto y 8% se anuncia 0
    porque la granularidad de 1 hora reduce el aviso casi a una variable binaria.
 3. Documentar en el capítulo de metodología las fuentes del aviso (avisos del STC en
    redes sociales o la app oficial) como insumo requerido para un despliegue real.
+
+## 9. Aviso con error aditivo (2026-09-27)
+
+Ejecución del punto 1 de la Sección 8.3. La Sección 8.2 (punto 2) atribuyó la robustez
+del aviso a que el ruido multiplicativo nunca se equivoca cuando el incidente termina en
+esta hora (restante 0). Aquí se prueba un error que sí se equivoca en ese caso.
+
+Cambios de código:
+
+- `simulador_congestion.py`: argumento `--error-aviso-aditivo K`. Suma al aviso un error
+  entero `δ` uniforme en `{−K, …, K}`: `aviso = max(round(restante × exp(ε)) + δ, 0)`. Se
+  combina con `--ruido-aviso` (σ = 0 si no se pasa) y usa el mismo generador aparte
+  (`default_rng(semilla + 1_000_000)`), así que no toca los sorteos de eventos.
+- `experimento_semillas.py`: variante `aviso_aditivo` = `--error-aviso-aditivo 1`
+  (`δ ∈ {−1, 0, +1}` con probabilidad 1/3 cada uno, sin ruido multiplicativo).
+
+Pruebas (semilla 42):
+
+- Sin argumentos de aviso, el dataset es idéntico al de `base` (`DataFrame.equals`).
+- Con `--ruido-aviso 0.5`, el dataset es idéntico al de `aviso_ruidoso` de la Sección 8:
+  el cambio no altera la variante anterior.
+- Con `--error-aviso-aditivo 1`, las 16 columnas previas son idénticas a `base`; el aviso
+  difiere del restante real en −1, 0 o +1, nunca es negativo, y la lluvia y los tramos
+  sin evento quedan en −1.
+
+**Precisión del aviso** (1,569 filas de incidente o falla, 30 semillas):
+
+| Restante real | Anunciado 0 | 1 | 2 | 3 | 4 |
+|---|---|---|---|---|---|
+| 0 | 556 | 264 | — | — | — |
+| 1 | 155 | 166 | 175 | — | — |
+| 2 | — | 72 | 58 | 64 | — |
+| 3 | — | — | 26 | 22 | 11 |
+
+Solo 51.1% de los avisos son exactos (81.1% con `aviso_ruidoso`). Más importante: la
+distinción "termina en esta hora / sigue" se anuncia bien en 73.3% de los casos, contra
+97.4% con `aviso_ruidoso` (ahí solo fallan las 41 filas con restante 1 anunciadas como
+0). Con error aditivo, un tercio de los incidentes que terminan se anuncian como "queda
+1 hora" y un tercio de los que tienen restante 1 se anuncian como "termina".
+
+### 9.1 Resultados
+
+| Variante | Ahorro total IA (min) [IC 95%] | Pérdidas IA (min) [IC 95%] | Cambios de ruta | % del ahorro posible [IC 95%] | P(IA ahorra más que reactivo) |
+|---|---|---|---|---|---|
+| `base` (sin aviso) | 23,494 [6,434; 43,875] | −5,483 [−9,744; −2,433] | 16,233 | 47.7 [23.2; 67.6] | 60% |
+| `aviso_perfecto` | 36,461 [12,815; 63,490] | −3,920 [−6,217; −2,048] | 18,376 | 74.1 [57.6; 81.9] | 96.3% |
+| `aviso_ruidoso` (σ = 0.5) | 36,548 [13,088; 63,434] | −3,334 [−5,175; −1,809] | 17,251 | 74.2 [59.3; 82.0] | 96.1% |
+| `aviso_aditivo` (δ ∈ {−1, 0, +1}) | 24,606 [6,615; 46,535] | −5,869 [−10,056; −2,730] | 17,624 | 50.0 [23.7; 69.0] | **63.9%** |
+
+**Diferencias pareadas de `aviso_aditivo`** (`aviso_aditivo` − referencia):
+
+| Referencia | Δ ahorro (min) [IC 95%] | P(ahorra más) | Δ pérdidas (min) [IC 95%] | P(pierde menos) | Horas mejor / peor / igual |
+|---|---|---|---|---|---|
+| `base` | +1,112 [−809; 4,040] | 79.6% | −386 [−1,193; 179] | 14.7% | 25 / 18 / 215 |
+| `aviso_perfecto` | **−11,855 [−25,089; −2,169]** | 0.0% | **−1,949 [−4,384; −243]** | 0.5% | 13 / 32 / 213 |
+| `aviso_ruidoso` | **−11,942 [−25,332; −2,084]** | 0.0% | **−2,535 [−6,032; −342]** | 0.2% | 15 / 29 / 214 |
+| Reactivo | +4,452 [−19,799; 29,146] | 63.9% | +23,156 [7,713; 43,342] | 100% | — |
+
+Desglose por tipo de hora (mismo corte que las Secciones 7.3 y 8.1):
+
+| Variante | 53 horas con ahorro posible: IA / reactivo (min) | 205 horas sin ahorro posible: IA (min) | Semillas con IA > reactivo |
+|---|---|---|---|
+| `base` | 28,010 / 37,044 | −4,516 | 18 / 30 |
+| `aviso_perfecto` | 39,230 / 37,044 | −2,769 | 20 / 30 |
+| `aviso_ruidoso` | 38,853 / 37,044 | −2,305 | 20 / 30 |
+| `aviso_aditivo` | 29,486 / 37,044 | −4,880 | 18 / 30 |
+
+Modelo (validación por días agregada, RF + línea/tramo): RMSE con evento 1.105, entre
+`base` (1.179) y `aviso_perfecto` (1.027). En la semilla 42 la importancia por
+permutación del aviso cae a 0.0037 (0.028 con `aviso_perfecto`), tercera variable,
+apenas por encima de `severidad_evento`.
+
+### 9.2 Lectura
+
+1. **La robustez de la Sección 8.2 (punto 2) venía del supuesto multiplicativo.** Un error
+   de solo ±1 hora, sin sesgo, borra casi todo el valor del aviso: la IA pasa de 74% a
+   50% del ahorro posible, pierde −11,900 min frente a las dos variantes anteriores (IC
+   pareados que excluyen el 0, P = 0%) y queda estadísticamente igual que sin aviso
+   (+1,112 min frente a `base`, IC [−809; 4,040], P = 80%). En pérdidas incluso queda
+   ligeramente peor que `base` (−386 min, no significativo).
+2. **El valor del aviso depende de su precisión, y así se reporta** (criterio de la
+   Sección 7.5). La precisión que importa no es la del número de horas sino la de la
+   distinción "el incidente termina en esta hora / sigue": con 97% de acierto
+   (`aviso_ruidoso`) el aviso vale lo mismo que uno perfecto; con 73% (`aviso_aditivo`)
+   casi no vale. El modelo aprende a desconfiar del aviso (su importancia cae de 0.028 a
+   0.004) y vuelve a apoyarse en `congestibilidad_t` y `congestibilidad_t_minus_1`, es
+   decir, al comportamiento de `base`. Es consistente con el mecanismo de la Sección 7.4:
+   el aviso solo ayuda si mueve la probabilidad de que el incidente siga lejos del ~39%
+   que el modelo ya estima por sí solo.
+3. **La afirmación de la Sección 8.2 (punto 4) se acota.** "Anticipar ahorra más" solo se
+   sostiene si el aviso de restablecimiento acierta casi siempre si el incidente termina
+   en la hora en curso. Con un aviso de ±1 hora, la IA vuelve a no superar al reactivo
+   en ahorro total (P = 64%). Para la tesis, la formulación defendible queda:
+   - Sin aviso o con aviso impreciso: **anticipar reduce el riesgo** (pérdidas 5× menores,
+     P = 100% en todas las variantes).
+   - Con un aviso que distingue con fiabilidad "termina / sigue": **anticipar además
+     ahorra más** (P ≈ 96%, con el matiz de IC de dos colas de la Sección 8.2).
+   - No hay datos del STC sobre la precisión de sus avisos, así que no se puede afirmar
+     en cuál de los dos casos está la red real.
+4. **Granularidad.** Un error de ±1 hora es grande respecto a incidentes que duran 1–4
+   horas (media 2). Con pasos sub-horarios (limitación #4) el mismo aviso real ("15 min")
+   tendría un error relativo menor; es otra razón para priorizar esa limitación.
+
+### 9.3 Siguiente paso
+
+1. **Sensibilidad a la probabilidad de error del aviso:** variar la fracción de avisos
+   con `δ ≠ 0` (p. ej. 10%, 20%, 33%) para encontrar a partir de qué precisión de
+   "termina / sigue" la IA supera al reactivo con P ≥ 95%. Da un requisito concreto de
+   calidad del aviso para un despliegue real.
+2. Sin cambios respecto a la Sección 8.3: limitación #4 (horizonte sub-horario) y #5
+   (perfiles O-D reales), y documentar las fuentes del aviso en el capítulo de
+   metodología.
 
 ---
 
@@ -1188,17 +1305,16 @@ modelo tenga suficientes ejemplos de eventos disruptivos que aprender.
 ## Mensaje de commit
 
 ```
-feat: aviso de restablecimiento, variantes y bootstrap pareado
+feat: aviso con error aditivo
 
-- simulador_congestion.py: --ruido-aviso agrega horas_restantes_anunciadas
-  (restante real con ruido log-normal, generador aparte; las demas columnas
-  quedan identicas, verificado con semilla 42).
-- entrenador_anticipatorio.py: el aviso entra como feature solo si existe;
-  --configuracion sobrescribe MODELO_ELEGIDO.
-- experimento_semillas.py: --variante, --reusar-dataset y --comparar A B
-  (bootstrap pareado por horas). Con aviso la IA captura 74% del ahorro
-  posible (antes 47.7%), ahorra +13,000 min mas que base (P = 100%) y supera
-  al reactivo con P = 96%; sigma = 0.5 rinde igual que el aviso perfecto.
-  HistGB rutea peor que RF (P pierde menos = 3.5%): se mantiene RF.
-- avances.md: seccion 8.
+- simulador_congestion.py: --error-aviso-aditivo K suma al aviso un error
+  entero uniforme en {-K..K} (mismo generador aparte; combinable con
+  --ruido-aviso). Verificado con semilla 42: sin aviso y con sigma = 0.5 los
+  datasets son identicos a base y aviso_ruidoso.
+- experimento_semillas.py: variante aviso_aditivo (K = 1). Con +-1 h de error
+  la IA captura 50.0% del ahorro posible (74% con aviso multiplicativo),
+  pierde -11,900 min frente a aviso_perfecto y aviso_ruidoso (P = 0%) y no
+  supera al reactivo (P = 64%): la robustez de la seccion 8 venia del
+  supuesto multiplicativo.
+- avances.md: seccion 9.
 ```
