@@ -53,26 +53,29 @@ def rutas_semilla(semilla, variante='base'):
         'grafica': os.path.join(base, "importancia_variables.png"),
         'evaluacion': os.path.join(base, "evaluacion_ruteo.csv"),
         'resumen': os.path.join(base, "resumen_ruteo.csv"),
+        'resumen_edad': os.path.join(base, "resumen_ruteo_por_edad.csv"),
         'log': os.path.join(base, "log.txt"),
     }
 
-def correr_semilla(semilla, variante='base', reusar_dataset=False):
+def correr_semilla(semilla, variante='base', reusar_dataset=False, solo_ruteo=False):
     r = rutas_semilla(semilla, variante)
     config = VARIANTES[variante]
     os.makedirs(r['dir'], exist_ok=True)
     pasos = []
-    if reusar_dataset and os.path.exists(r['dataset']):
+    if solo_ruteo:
+        # Reevalúa el ruteo con el dataset y el modelo ya guardados (sin resimular ni reentrenar)
+        pass
+    elif reusar_dataset and os.path.exists(r['dataset']):
         print(f"[{variante} {semilla}] reusa {r['dataset']}", flush=True)
     else:
         os.makedirs(os.path.dirname(r['dataset']), exist_ok=True)
         pasos.append(["simulador_congestion.py", "--semilla", str(semilla), "--salida", r['dataset']] + config['simulador'])
-    pasos += [
-        ["entrenador_anticipatorio.py", "--dataset", r['dataset'], "--modelo", r['modelo'],
-         "--comparacion", r['comparacion'], "--grafica", r['grafica']] + config['entrenador'],
-        ["ruteo_anticipatorio.py", "--dataset", r['dataset'], "--modelo", r['modelo'],
-         "--evaluacion", r['evaluacion'], "--resumen", r['resumen']],
-    ]
-    with open(r['log'], "w", encoding="utf-8") as log:
+    if not solo_ruteo:
+        pasos.append(["entrenador_anticipatorio.py", "--dataset", r['dataset'], "--modelo", r['modelo'],
+                      "--comparacion", r['comparacion'], "--grafica", r['grafica']] + config['entrenador'])
+    pasos.append(["ruteo_anticipatorio.py", "--dataset", r['dataset'], "--modelo", r['modelo'],
+                  "--evaluacion", r['evaluacion'], "--resumen", r['resumen'], "--resumen-edad", r['resumen_edad']])
+    with open(r['log'], "a" if solo_ruteo else "w", encoding="utf-8") as log:
         for paso in pasos:
             print(f"[{variante} {semilla}] {paso[0]}...", flush=True)
             subprocess.run([sys.executable] + paso, stdout=log, stderr=subprocess.STDOUT, check=True,
@@ -83,8 +86,12 @@ def correr_semilla(semilla, variante='base', reusar_dataset=False):
 SISTEMAS = ['reactivo', 'anticipatorio', 'oraculo']
 REPETICIONES_BOOTSTRAP = 5000
 
-def cargar_por_hora(variante):
-    """Casos O-D de todas las semillas, sumados por hora con evento (semilla, fecha, hora)."""
+def cargar_por_hora(variante, por_edad=False):
+    """
+    Casos O-D de todas las semillas, sumados por hora con evento (semilla, fecha, hora).
+    Con por_edad=True se separan además por la edad del evento que cruza cada caso, de
+    modo que una hora puede aportar un conglomerado a cada edad.
+    """
     filas = []
     for semilla in SEMILLAS:
         df = pd.read_csv(rutas_semilla(semilla, variante)['evaluacion'])
@@ -97,9 +104,33 @@ def cargar_por_hora(variante):
 
     columnas = [f'ahorro_{s}' for s in SISTEMAS] + [f'perdida_{s}' for s in SISTEMAS] + \
                [f'cambio_ruta_{s}' for s in SISTEMAS]
-    por_hora = df_eval.groupby(['semilla', 'fecha', 'hora'])[columnas].sum()
-    por_hora['casos'] = df_eval.groupby(['semilla', 'fecha', 'hora']).size()
+    claves = ['semilla', 'fecha', 'hora'] + (['edad_evento'] if por_edad else [])
+    por_hora = df_eval.groupby(claves)[columnas].sum()
+    por_hora['casos'] = df_eval.groupby(claves).size()
     return por_hora
+
+def estadisticos_ruteo(muestra):
+    total = muestra.sum()
+    res = {}
+    for s in SISTEMAS:
+        res[f'ahorro_{s}'] = total[f'ahorro_{s}']
+        res[f'perdida_{s}'] = total[f'perdida_{s}']
+    for s in ['reactivo', 'anticipatorio']:
+        res[f'pct_capturado_{s}'] = 100 * total[f'ahorro_{s}'] / total['ahorro_oraculo']
+    res['diferencia_min'] = total['ahorro_anticipatorio'] - total['ahorro_reactivo']
+    res['diferencia_perdida_min'] = total['perdida_anticipatorio'] - total['perdida_reactivo']
+    return res
+
+def bootstrap_ruteo(por_hora):
+    """Estadísticos puntuales y remuestreos por conglomerados (filas de por_hora completas)."""
+    puntual = estadisticos_ruteo(por_hora)
+    rng = np.random.default_rng(0)
+    muestras = []
+    for _ in range(REPETICIONES_BOOTSTRAP):
+        muestra = por_hora.iloc[rng.integers(len(por_hora), size=len(por_hora))]
+        if muestra['ahorro_oraculo'].sum() > 0:
+            muestras.append(estadisticos_ruteo(muestra))
+    return puntual, pd.DataFrame(muestras)
 
 def agregar_ruteo(variante='base'):
     """
@@ -118,27 +149,7 @@ def agregar_ruteo(variante='base'):
     por_semilla.insert(0, 'horas_con_evento', por_hora.groupby('semilla').size())
     print(por_semilla.round(1).to_string())
 
-    def estadisticos(muestra):
-        total = muestra.sum()
-        res = {}
-        for s in SISTEMAS:
-            res[f'ahorro_{s}'] = total[f'ahorro_{s}']
-            res[f'perdida_{s}'] = total[f'perdida_{s}']
-        for s in ['reactivo', 'anticipatorio']:
-            res[f'pct_capturado_{s}'] = 100 * total[f'ahorro_{s}'] / total['ahorro_oraculo']
-        res['diferencia_min'] = total['ahorro_anticipatorio'] - total['ahorro_reactivo']
-        res['diferencia_perdida_min'] = total['perdida_anticipatorio'] - total['perdida_reactivo']
-        return res
-
-    puntual = estadisticos(por_hora)
-    rng = np.random.default_rng(0)
-    muestras = []
-    for _ in range(REPETICIONES_BOOTSTRAP):
-        idx = rng.integers(len(por_hora), size=len(por_hora))
-        muestra = por_hora.iloc[idx]
-        if muestra['ahorro_oraculo'].sum() > 0:
-            muestras.append(estadisticos(muestra))
-    df_boot = pd.DataFrame(muestras)
+    puntual, df_boot = bootstrap_ruteo(por_hora)
 
     horas_con_ahorro = int((por_hora['ahorro_oraculo'] > 0.5).sum())
     print(f"\n=== [{variante}] Ruteo agregado ({len(por_hora)} horas con evento, {int(por_hora['casos'].sum())} casos; "
@@ -159,6 +170,40 @@ def agregar_ruteo(variante='base'):
     filas_ic.append({'estadistico': 'prob_anticipatorio_pierde_menos', 'puntual': prob_perdida})
     pd.DataFrame(filas_ic).to_csv(archivo_resultados('bootstrap', variante), index=False)
     return por_hora
+
+EDADES_REPORTADAS = [0, 1, 2]
+
+def agregar_ruteo_por_edad(variante='base'):
+    """
+    Reactivo vs. anticipatorio separado por edad del evento: hora 0 (primera hora del
+    evento), hora + 1 y hora + 2. Mismo bootstrap por conglomerados que agregar_ruteo, con
+    un conglomerado por (hora con evento, edad).
+    """
+    por_hora = cargar_por_hora(variante, por_edad=True)
+    filas = []
+    print(f"\n=== [{variante}] Ruteo por edad del evento ===")
+    for edad in EDADES_REPORTADAS:
+        grupo = por_hora.xs(edad, level='edad_evento') if edad in por_hora.index.get_level_values('edad_evento') else None
+        if grupo is None or grupo.empty:
+            continue
+        puntual, df_boot = bootstrap_ruteo(grupo)
+        fila = {'edad_evento': edad, 'horas': len(grupo), 'casos': int(grupo['casos'].sum()),
+                'horas_con_ahorro_posible': int((grupo['ahorro_oraculo'] > 0.5).sum())}
+        for clave, valor in puntual.items():
+            fila[clave] = valor
+            fila[f'{clave}_ic95_bajo'], fila[f'{clave}_ic95_alto'] = df_boot[clave].quantile([0.025, 0.975])
+        fila['prob_anticipatorio_ahorra_mas'] = 100 * (df_boot['diferencia_min'] > 0).mean()
+        fila['prob_anticipatorio_pierde_menos'] = 100 * (df_boot['diferencia_perdida_min'] > 0).mean()
+        filas.append(fila)
+        print(f"hora + {edad}: {fila['horas']} horas, {fila['casos']} casos | ahorro IA {puntual['ahorro_anticipatorio']:.0f} "
+              f"vs. reactivo {puntual['ahorro_reactivo']:.0f} (oráculo {puntual['ahorro_oraculo']:.0f}) | "
+              f"diferencia {puntual['diferencia_min']:.0f} [{fila['diferencia_min_ic95_bajo']:.0f}; "
+              f"{fila['diferencia_min_ic95_alto']:.0f}], P(IA ahorra más) {fila['prob_anticipatorio_ahorra_mas']:.1f}% | "
+              f"pérdidas IA {puntual['perdida_anticipatorio']:.0f} vs. reactivo {puntual['perdida_reactivo']:.0f}")
+    fuera = por_hora[~por_hora.index.get_level_values('edad_evento').isin(EDADES_REPORTADAS)]
+    print(f"Excluidos (edad >= 3): {len(fuera)} conglomerados, {int(fuera['casos'].sum())} casos")
+    pd.DataFrame(filas).to_csv(archivo_resultados('por_edad', variante), index=False)
+    return pd.DataFrame(filas)
 
 def comparar_variantes(variante_a, variante_b):
     """
@@ -266,6 +311,8 @@ if __name__ == "__main__":
                         help="Recalcula los resúmenes con las corridas ya existentes")
     parser.add_argument("--comparar", nargs=2, metavar=('A', 'B'), choices=list(VARIANTES),
                         help="Solo la comparación pareada B − A entre dos variantes ya corridas")
+    parser.add_argument("--solo-ruteo", action="store_true",
+                        help="Reevalúa solo el ruteo con los datasets y modelos ya guardados")
     parser.add_argument("--paralelo", type=int, default=CORRIDAS_EN_PARALELO)
     args = parser.parse_args()
 
@@ -274,6 +321,7 @@ if __name__ == "__main__":
         sys.exit(0)
     if not args.solo_agregar:
         with ThreadPoolExecutor(max_workers=args.paralelo) as ejecutor:
-            list(ejecutor.map(lambda s: correr_semilla(s, args.variante, args.reusar_dataset), SEMILLAS))
+            list(ejecutor.map(lambda s: correr_semilla(s, args.variante, args.reusar_dataset, args.solo_ruteo), SEMILLAS))
     agregar_modelos(args.variante)
     agregar_ruteo(args.variante)
+    agregar_ruteo_por_edad(args.variante)

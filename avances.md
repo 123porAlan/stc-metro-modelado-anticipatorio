@@ -2,7 +2,7 @@
 
 **Alumno:** Alan Bellon García
 **Asesor:** M. en Fil. C. Enrique Francisco Soto Astorga
-**Fecha de este reporte:** 2026-09-27 (actualizado — ver [Sección 4](#4-extensión-multi-día--eventos-estocásticos-2026-09-27) , [Sección 5](#5-ubicación-en-la-red-comparación-de-modelos-y-evaluación-sistemática-del-ruteo-2026-09-27) , [Sección 6](#6-capacidad-por-línea-suspensión-de-tramos-tasas-calibradas-y-experimento-multi-semilla-2026-09-27) , [Sección 7](#7-selección-fija-de-modelo-30-semillas-y-edad-del-evento-2026-09-27) , [Sección 8](#8-aviso-de-restablecimiento-y-histgb-en-el-ruteo-2026-09-27) y [Sección 9](#9-aviso-con-error-aditivo-2026-09-27))
+**Fecha de este reporte:** 2026-09-27 (actualizado — ver [Sección 4](#4-extensión-multi-día--eventos-estocásticos-2026-09-27) , [Sección 5](#5-ubicación-en-la-red-comparación-de-modelos-y-evaluación-sistemática-del-ruteo-2026-09-27) , [Sección 6](#6-capacidad-por-línea-suspensión-de-tramos-tasas-calibradas-y-experimento-multi-semilla-2026-09-27) , [Sección 7](#7-selección-fija-de-modelo-30-semillas-y-edad-del-evento-2026-09-27) , [Sección 8](#8-aviso-de-restablecimiento-y-histgb-en-el-ruteo-2026-09-27) , [Sección 9](#9-aviso-con-error-aditivo-2026-09-27) y [Sección 10](#10-ruteo-por-edad-del-evento-hora-0--1-y--2-2026-09-27))
 
 Este documento resume el estado técnico y metodológico del prototipo descrito en el
 anexo de titulación (*"Modelado y prototipado de un sistema de Inteligencia Artificial
@@ -20,7 +20,7 @@ de México"*), con base en el código y los datos actualmente presentes en
 | Representar la red como grafo con pesos | ✅ Completo | `grafo_metro.py` → `grafo_base_metro.gexf` |
 | Modelo de estimación a horizonte corto (10–60 min) | ⚠️ Parcial (horizonte discreto de 1 hora, no continuo 10-60 min); comparación de 6 configuraciones; modelo fijo RandomForest + línea/tramo porque la selección por semilla es inestable (Secciones 6.4 y 7.1); HistGB rutea peor (Sección 8.2) | `entrenador_anticipatorio.py` → `modelos/modelo_anticipatorio.pkl` |
 | Algoritmo de ruteo que integre la métrica predictiva | ✅ Prueba de concepto funcional | `ruteo_anticipatorio.py` |
-| Integración estimación + ruteo en prototipo funcional | ⚠️ Evaluado con 30 semillas (258 horas con evento, 525,446 casos O-D): la IA pierde 5.3× menos que el reactivo (IC excluye 0) y captura 47.7% [23.2; 67.6] del ahorro posible, pero su ventaja en ahorro total no es significativa (Sección 7.3). Con aviso de restablecimiento (σ = 0.5) captura 74.2% [59.3; 82.0] y ahorra más que el reactivo con P = 96% (Sección 8), pero con un error de ±1 h en el aviso vuelve a 50.0% y P = 64% (Sección 9) | `ruteo_anticipatorio.py` |
+| Integración estimación + ruteo en prototipo funcional | ⚠️ Evaluado con 30 semillas (258 horas con evento, 525,446 casos O-D): la IA pierde 5.3× menos que el reactivo (IC excluye 0) y captura 47.7% [23.2; 67.6] del ahorro posible, pero su ventaja en ahorro total no es significativa (Sección 7.3). Con aviso de restablecimiento (σ = 0.5) captura 74.2% [59.3; 82.0] y ahorra más que el reactivo con P = 96% (Sección 8), pero con un error de ±1 h en el aviso vuelve a 50.0% y P = 64% (Sección 9). Por edad del evento, la ventaja de la IA está en la hora + 2 (P = 99.9%), no en la hora 0 (P = 34%) (Sección 10) | `ruteo_anticipatorio.py` |
 | Explicabilidad de las recomendaciones | ✅ Iniciado (importancia por permutación, agnóstica al modelo) | `entrenador_anticipatorio.py` → `importancia_variables.png` |
 | Sistema reactivo de comparación (índice 5.5) | ✅ Implementado y comparado: estático vs. reactivo vs. anticipatorio vs. oráculo | `ruteo_anticipatorio.py` |
 
@@ -1217,6 +1217,105 @@ apenas por encima de `severidad_evento`.
    (perfiles O-D reales), y documentar las fuentes del aviso en el capítulo de
    metodología.
 
+## 10. Ruteo por edad del evento: hora 0, + 1 y + 2 (2026-09-27)
+
+Análisis pedido fuera del plan de la Sección 9.3, que sigue pendiente. Pregunta: ¿la IA
+supera al reactivo de forma más evidente en la **hora 0** del evento, cuando menos se
+sabe si el incidente va a seguir?
+
+Cambios de código:
+
+- `ruteo_anticipatorio.py`: cada caso O-D guarda `edad_evento` = edad del evento que
+  cruza su ruta estática (0 = primera hora del evento, 1 = hora + 1, ...; si cruza varios
+  tramos afectados, el evento más reciente). Nuevo resumen restringido a las edades 0, 1
+  y 2 (`--resumen-edad`, `resumen_ruteo_por_edad.csv`); los casos con edad ≥ 3 se
+  excluyen y se cuentan aparte.
+- `experimento_semillas.py`: `agregar_ruteo_por_edad` hace el bootstrap por
+  conglomerados (5,000 repeticiones) por separado para cada edad, con un conglomerado por
+  (hora con evento, edad); se ejecuta al final de cada corrida y se guarda en
+  `modelos/resultados_semillas_por_edad[_<variante>].csv`. El bootstrap se factorizó
+  (`estadisticos_ruteo`, `bootstrap_ruteo`) para compartirlo con `agregar_ruteo`. Nuevo
+  modo `--solo-ruteo` que reevalúa el ruteo con los datasets y modelos ya guardados.
+
+Pruebas: con la semilla 42 (`base`) la evaluación nueva es idéntica a la anterior en todas
+sus columnas salvo `edad_evento`, el resumen global es idéntico y la suma por edad cuadra
+con el total. Tras reevaluar las 5 variantes × 30 semillas con `--solo-ruteo`, los totales
+reproducen exactamente las Secciones 7.3, 8.1 y 9.1.
+
+Reparto de los casos (30 semillas): hora 0 = 144 conglomerados y 281,616 casos; hora + 1 =
+86 y 173,334; hora + 2 = 37 y 63,230; edad ≥ 3 = 5 y 7,266 (excluidos). Ahorro posible
+(oráculo): 26,591, 22,521 y 112 min.
+
+Una aclaración de definición: en la hora 0 el evento ya está activo en `t`, así que el
+reactivo **ya lo ve** en `congestibilidad_t`. Ningún sistema puede anticipar el arranque
+de un evento: el dataset no trae ninguna señal previa a `hay_evento = 1`. Lo que se decide
+en la hora 0 es si el evento seguirá en `t + 1`.
+
+### 10.1 Resultados
+
+`base` (RF + línea/tramo, sin aviso):
+
+| Edad | Ahorro IA (min) | Ahorro reactivo | Δ IA − reactivo [IC 95%] | P(IA ahorra más) | Pérdidas IA / reactivo |
+|---|---|---|---|---|---|
+| Hora 0 | 17,095 | 19,174 | −2,079 [−11,429; 5,696] | 34.3% | −4,111 / −7,402 |
+| Hora + 1 | 7,262 | 19,887 | −12,624 [−30,100; 247] | **2.9%** | −481 / −2,629 |
+| Hora + 2 | −863 | −18,852 | **+17,989 [3,612; 37,042]** | **99.9%** | −890 / −18,938 |
+
+P(IA ahorra más que el reactivo) por variante:
+
+| Edad | `base` | `hgb` | `aviso_perfecto` | `aviso_ruidoso` | `aviso_aditivo` |
+|---|---|---|---|---|---|
+| Hora 0 | 34.3% | 11.8% | 68.0% | 70.9% | 37.0% |
+| Hora + 1 | 2.9% | 4.2% | 12.1% | 10.9% | 3.0% |
+| Hora + 2 | 99.9% | 99.9% | 100% | 100% | 100% |
+
+Ahorro IA en la hora 0 y la hora + 1 (el reactivo es igual en todas: 19,174 y 19,887 min):
+
+| Edad | `base` | `hgb` | `aviso_perfecto` | `aviso_ruidoso` | `aviso_aditivo` |
+|---|---|---|---|---|---|
+| Hora 0 | 17,095 | 16,111 | 20,742 | 21,124 | 17,957 |
+| Hora + 1 | 7,262 | 6,158 | 16,391 | 16,057 | 7,486 |
+
+### 10.2 Lectura
+
+1. **No: la IA no supera al reactivo en la hora 0.** Sin aviso, el reactivo ahorra más
+   (19,174 vs. 17,095 min; P de que la IA ahorre más = 34%). Ni con el aviso perfecto la
+   ventaja es significativa en esa hora (+1,568 min, IC [−4,368; 8,244], P = 68%). Lo que
+   sí hace la IA en la hora 0 es perder menos (−4,111 vs. −7,402 min).
+2. **La hora + 1 es la peor para la IA.** El reactivo captura 88% del ahorro posible
+   (19,887 de 22,521 min) y la IA sin aviso solo 32% (7,262); P = 2.9% de que la IA
+   ahorre más. En esa hora hay casi tanto ahorro posible como en la hora 0: los eventos
+   que ya duraron una hora siguen con frecuencia suficiente para que desviarse valga la
+   pena, y el reactivo, que supone continuidad, acierta. La IA sin aviso predice el valor
+   esperado y rara vez se desvía (Sección 7.4). El aviso (perfecto o ruidoso) es lo que
+   más la ayuda aquí: de 7,262 a ~16,000 min, aunque sigue por debajo del reactivo.
+3. **Toda la ventaja agregada de la IA viene de la hora + 2.** Ahí el ahorro posible es
+   casi nulo (112 min: los eventos ya terminaron o terminan), el reactivo se sigue
+   desviando por congestión que ya no estará y pierde −18,852 min; la IA casi no se
+   mueve (−863). Esa sola hora aporta +17,989 min a favor de la IA (P = 99.9%) y es
+   significativa en las 5 variantes. Coincide con la Sección 7.3: la IA gana por no
+   perder cuando el incidente acaba, no por ganar mientras sigue.
+4. **Para la tesis.** La ventaja de anticipar no está en el arranque del evento sino en su
+   final: el valor de la IA es saber cuándo **dejar** de evitar un tramo. La formulación
+   "anticipar reduce el riesgo" (Secciones 7.3 y 9.2) se precisa así: reduce el riesgo de
+   seguir desviando a los usuarios cuando la disrupción ya terminó. En las dos primeras
+   horas el reactivo es igual o mejor, y el aviso de restablecimiento solo cierra parte
+   de la brecha en la hora + 1.
+5. **Salvedad.** La hora + 2 descansa en 37 conglomerados y su diferencia la domina el
+   error del reactivo, no un acierto de la IA. En la hora + 2 el evento sigue activo en
+   `t`, así que un umbral sobre la congestión observada no cambiaría la decisión del
+   reactivo; sí la cambiaría una regla simple de duración (p. ej. no desviar por eventos
+   con 2 h o más de antigüedad), que captaría esta ventaja sin modelo. No se probó.
+
+### 10.3 Siguiente paso
+
+1. Pendiente de la Sección 9.3: sensibilidad a la probabilidad de error del aviso.
+2. **Reactivo más fuerte:** un reactivo con una regla de duración (ignorar eventos con
+   edad ≥ 2), para ver cuánto de la ventaja de la hora + 2 sobrevive contra un baseline
+   menos ingenuo.
+3. Desglosar la hora + 1 por tipo de evento (lluvia, falla, incidente): la lluvia afecta
+   líneas completas y puede dominar el número de casos.
+
 ---
 
 ## Análisis de factibilidad técnica: eventos estocásticos (lluvia, contingencias/accidentes)
@@ -1305,16 +1404,16 @@ modelo tenga suficientes ejemplos de eventos disruptivos que aprender.
 ## Mensaje de commit
 
 ```
-feat: aviso con error aditivo
+feat: ruteo por edad del evento (hora 0, +1, +2)
 
-- simulador_congestion.py: --error-aviso-aditivo K suma al aviso un error
-  entero uniforme en {-K..K} (mismo generador aparte; combinable con
-  --ruido-aviso). Verificado con semilla 42: sin aviso y con sigma = 0.5 los
-  datasets son identicos a base y aviso_ruidoso.
-- experimento_semillas.py: variante aviso_aditivo (K = 1). Con +-1 h de error
-  la IA captura 50.0% del ahorro posible (74% con aviso multiplicativo),
-  pierde -11,900 min frente a aviso_perfecto y aviso_ruidoso (P = 0%) y no
-  supera al reactivo (P = 64%): la robustez de la seccion 8 venia del
-  supuesto multiplicativo.
-- avances.md: seccion 9.
+- ruteo_anticipatorio.py: cada caso guarda la edad del evento que cruza su
+  ruta estatica; resumen restringido a hora 0, +1 y +2 (--resumen-edad).
+- experimento_semillas.py: bootstrap por edad (agregar_ruteo_por_edad),
+  bootstrap factorizado y modo --solo-ruteo. Reevaluadas las 5 variantes;
+  los totales reproducen las secciones 7-9.
+- Resultado: la IA no supera al reactivo en la hora 0 (P = 34% sin aviso,
+  68% con aviso perfecto) y pierde en la hora +1 (P = 2.9%); toda su ventaja
+  viene de la hora +2 (+17,989 min, P = 99.9%), cuando el evento ya termina
+  y el reactivo sigue desviando.
+- avances.md: seccion 10.
 ```

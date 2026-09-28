@@ -9,6 +9,8 @@ parser.add_argument("--dataset", default=ARCHIVO_DATASET)
 parser.add_argument("--modelo", default=RUTA_MODELO)
 parser.add_argument("--evaluacion", default="datos_procesados/evaluacion_ruteo_eventos.csv")
 parser.add_argument("--resumen", default="datos_procesados/resumen_ruteo_eventos.csv")
+parser.add_argument("--resumen-edad", default="datos_procesados/resumen_ruteo_eventos_por_edad.csv",
+                    help="Resumen restringido a casos cuyo evento está en su hora 0, +1 o +2")
 args = parser.parse_args()
 
 def obtener_id_nodo(G, nombre_estacion):
@@ -118,6 +120,47 @@ else:
 # - reactivo: congestión observada ahora (sistema reactivo, índice 5.5 de la tesis).
 # - anticipatorio: congestión que la IA proyecta para t+1.
 # - oráculo: congestión real de t+1 (cota superior: el mejor ahorro posible).
+# Cada caso guarda además la edad del evento que cruza su ruta estática (0 = primera hora
+# del evento, 1 = hora + 1, ...; si cruza varios, el más reciente), para ver si la ventaja
+# de anticipar se concentra al inicio del evento, cuando menos se sabe si va a seguir.
+EDADES_REPORTADAS = [0, 1, 2]
+SISTEMAS = ['reactivo', 'anticipatorio', 'oraculo']
+
+def resumir(df_eval):
+    ahorro_posible = (df_eval['tiempo_real_estatico'] - df_eval['tiempo_real_oraculo']).sum()
+    resumen = []
+    for nombre in SISTEMAS:
+        ahorro = df_eval['tiempo_real_estatico'] - df_eval[f'tiempo_real_{nombre}']
+        cambio = df_eval[f'cambio_ruta_{nombre}']
+        resumen.append({
+            'sistema': nombre,
+            'casos_con_cambio_ruta': int(cambio.sum()),
+            'pct_cambio_ruta': 100 * cambio.mean(),
+            'ahorro_medio_min': ahorro.mean(),
+            'ahorro_medio_si_cambia_min': ahorro[cambio].mean() if cambio.any() else 0.0,
+            'ahorro_max_min': ahorro.max(),
+            'casos_peor_que_estatico': int((ahorro < -1e-9).sum()),
+            'pct_ahorro_posible_capturado': 100 * ahorro.sum() / ahorro_posible if ahorro_posible > 0 else float('nan'),
+        })
+    return pd.DataFrame(resumen)
+
+def resumir_por_edad(df_eval):
+    """Mismo resumen, solo con los casos en la hora 0, +1 y +2 del evento."""
+    filas = []
+    for edad in EDADES_REPORTADAS:
+        df_edad = df_eval[df_eval['edad_evento'] == edad]
+        if df_edad.empty:
+            continue
+        resumen = resumir(df_edad)
+        resumen.insert(0, 'edad_evento', edad)
+        resumen.insert(1, 'horas', df_edad[['fecha', 'hora']].drop_duplicates().shape[0])
+        resumen.insert(2, 'casos', len(df_edad))
+        for nombre in SISTEMAS:
+            resumen.loc[resumen['sistema'] == nombre, 'ahorro_total_min'] = \
+                (df_edad['tiempo_real_estatico'] - df_edad[f'tiempo_real_{nombre}']).sum()
+        filas.append(resumen)
+    return pd.concat(filas, ignore_index=True) if filas else pd.DataFrame()
+
 def evaluar_ruteo_en_eventos():
     print("\n\n=======================================================")
     print("📊 EVALUACIÓN SISTEMÁTICA: horas con evento en días no vistos")
@@ -143,8 +186,10 @@ def evaluar_ruteo_en_eventos():
     registros = []
     for fecha, hora in horas_evento.itertuples(index=False):
         df_hora = proyectar_hora(fecha, hora)
-        afectados = {frozenset(t) for t in zip(df_hora[df_hora['hay_evento'] == 1]['nodo_origen'],
-                                                  df_hora[df_hora['hay_evento'] == 1]['nodo_destino'])}
+        con_evento = df_hora[df_hora['hay_evento'] == 1]
+        # tramo afectado -> edad de su evento (el dataset guarda el evento más severo del tramo)
+        afectados = {frozenset(t): edad for *t, edad in zip(con_evento['nodo_origen'], con_evento['nodo_destino'],
+                                                            con_evento['edad_evento'])}
         G_real = grafo_con_retraso(df_hora, TARGET)
         grafos = {
             'reactivo': grafo_con_retraso(df_hora, 'congestibilidad_t'),
@@ -158,11 +203,13 @@ def evaluar_ruteo_en_eventos():
                 if o == d:
                     continue
                 ruta_est = rutas_estaticas[o][d]
-                if not any(frozenset(t) in afectados for t in zip(ruta_est[:-1], ruta_est[1:])):
+                edades = [afectados[frozenset(t)] for t in zip(ruta_est[:-1], ruta_est[1:]) if frozenset(t) in afectados]
+                if not edades:
                     continue
                 registro = {
                     'fecha': fecha.date(), 'hora': hora,
                     'origen': G_base.nodes[o]['nombre'], 'destino': G_base.nodes[d]['nombre'],
+                    'edad_evento': min(edades),
                     'tiempo_real_estatico': tiempo_ruta(G_real, ruta_est),
                 }
                 for nombre, G in grafos.items():
@@ -178,27 +225,20 @@ def evaluar_ruteo_en_eventos():
     print(f"Casos evaluados (pares O-D que cruzan un tramo con evento): {len(df_eval)}")
     print(f"Detalle guardado en: {args.evaluacion}")
 
-    ahorro_posible = (df_eval['tiempo_real_estatico'] - df_eval['tiempo_real_oraculo']).sum()
-    resumen = []
-    for nombre in ['reactivo', 'anticipatorio', 'oraculo']:
-        ahorro = df_eval['tiempo_real_estatico'] - df_eval[f'tiempo_real_{nombre}']
-        cambio = df_eval[f'cambio_ruta_{nombre}']
-        resumen.append({
-            'sistema': nombre,
-            'casos_con_cambio_ruta': int(cambio.sum()),
-            'pct_cambio_ruta': 100 * cambio.mean(),
-            'ahorro_medio_min': ahorro.mean(),
-            'ahorro_medio_si_cambia_min': ahorro[cambio].mean() if cambio.any() else 0.0,
-            'ahorro_max_min': ahorro.max(),
-            'casos_peor_que_estatico': int((ahorro < -1e-9).sum()),
-            'pct_ahorro_posible_capturado': 100 * ahorro.sum() / ahorro_posible if ahorro_posible > 0 else float('nan'),
-        })
-    df_resumen = pd.DataFrame(resumen)
+    df_resumen = resumir(df_eval)
     df_resumen.insert(0, 'horas_con_evento', len(horas_evento))
     df_resumen.insert(1, 'casos_evaluados', len(df_eval))
     df_resumen.to_csv(args.resumen, index=False)
     print("\n--- Ahorro de tiempo REAL frente al ruteo estático ---")
     print(df_resumen.drop(columns=['horas_con_evento', 'casos_evaluados']).to_string(index=False, float_format=lambda x: f"{x:.3f}"))
+
+    df_edad = resumir_por_edad(df_eval)
+    df_edad.to_csv(args.resumen_edad, index=False)
+    fuera = int((~df_eval['edad_evento'].isin(EDADES_REPORTADAS)).sum())
+    print(f"\n--- Por edad del evento (hora 0, +1, +2; {fuera} casos con edad >= 3 excluidos) ---")
+    if not df_edad.empty:
+        print(df_edad[['edad_evento', 'horas', 'casos', 'sistema', 'ahorro_total_min', 'casos_peor_que_estatico',
+                       'pct_ahorro_posible_capturado']].to_string(index=False, float_format=lambda x: f"{x:.2f}"))
     return df_eval
 
 evaluar_ruteo_en_eventos()
