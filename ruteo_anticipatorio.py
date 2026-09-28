@@ -127,9 +127,19 @@ else:
 # - reactivo_duracion: reactivo con una regla de duración (ver avances.md, Sección 11). En
 #   los tramos cuyo evento tiene EDAD_IGNORADA horas o más supone que el evento ya no sigue
 #   y usa el perfil histórico sin evento del tramo en lugar de la congestión observada.
+# - hibrido: la IA, salvo en los tramos con evento de EDAD_IGNORADA horas o más, donde usa
+#   la misma regla de duración (Sección 12).
+# Para la sensibilidad del umbral, ambos sistemas se evalúan también con edad >= 1 y >= 3
+# (sufijo _1 y _3); sin sufijo es el umbral por defecto (edad >= 2).
 EDADES_REPORTADAS = [0, 1, 2]
 EDAD_IGNORADA = 2
-SISTEMAS = ['reactivo', 'reactivo_duracion', 'anticipatorio', 'oraculo']
+UMBRALES_REGLA = [1, 2, 3]
+
+def sufijo_umbral(umbral):
+    return "" if umbral == EDAD_IGNORADA else f"_{umbral}"
+
+SISTEMAS = (['reactivo'] + [f'reactivo_duracion{sufijo_umbral(u)}' for u in UMBRALES_REGLA] + ['anticipatorio']
+            + [f'hibrido{sufijo_umbral(u)}' for u in UMBRALES_REGLA] + ['oraculo'])
 
 def resumir(df_eval):
     ahorro_posible = (df_eval['tiempo_real_estatico'] - df_eval['tiempo_real_oraculo']).sum()
@@ -176,11 +186,11 @@ def perfil_sin_evento(df_entrenamiento):
     sin_evento = df_entrenamiento[df_entrenamiento['hay_evento'] == 0]
     return sin_evento.groupby(['nodo_origen', 'nodo_destino', 'tipo_dia', 'hora'])['congestibilidad_t'].mean()
 
-def congestion_con_regla_duracion(df_hora, perfil):
-    """congestibilidad_t, salvo en tramos con evento de edad >= EDAD_IGNORADA (perfil sin evento; 0 si no hay)."""
-    viejo = df_hora['edad_evento'] >= EDAD_IGNORADA
+def congestion_con_regla_duracion(df_hora, perfil, columna='congestibilidad_t', umbral=EDAD_IGNORADA):
+    """La columna indicada, salvo en tramos con evento de edad >= umbral (perfil sin evento; 0 si no hay)."""
+    viejo = df_hora['edad_evento'] >= umbral
     claves = pd.MultiIndex.from_frame(df_hora.loc[viejo, ['nodo_origen', 'nodo_destino', 'tipo_dia', 'hora']])
-    congestion = df_hora['congestibilidad_t'].copy()
+    congestion = df_hora[columna].copy()
     congestion[viejo] = perfil.reindex(claves).fillna(0.0).to_numpy()
     return congestion
 
@@ -214,14 +224,15 @@ def evaluar_ruteo_en_eventos():
         # tramo afectado -> (edad, tipo) de su evento (el dataset guarda el evento más severo del tramo)
         afectados = {frozenset((u, v)): (edad, tipo) for u, v, edad, tipo in zip(
             con_evento['nodo_origen'], con_evento['nodo_destino'], con_evento['edad_evento'], con_evento['tipo_evento'])}
-        df_hora['congestion_regla_duracion'] = congestion_con_regla_duracion(df_hora, perfil)
         G_real = grafo_con_retraso(df_hora, TARGET)
-        grafos = {
-            'reactivo': grafo_con_retraso(df_hora, 'congestibilidad_t'),
-            'reactivo_duracion': grafo_con_retraso(df_hora, 'congestion_regla_duracion'),
-            'anticipatorio': grafo_con_retraso(df_hora, 'retraso_predicho'),
-            'oraculo': G_real,
-        }
+        grafos = {'reactivo': grafo_con_retraso(df_hora, 'congestibilidad_t'),
+                  'anticipatorio': grafo_con_retraso(df_hora, 'retraso_predicho')}
+        for umbral in UMBRALES_REGLA:
+            for nombre, columna in (('reactivo_duracion', 'congestibilidad_t'), ('hibrido', 'retraso_predicho')):
+                clave = f'{nombre}{sufijo_umbral(umbral)}'
+                df_hora[clave] = congestion_con_regla_duracion(df_hora, perfil, columna, umbral)
+                grafos[clave] = grafo_con_retraso(df_hora, clave)
+        grafos = {nombre: grafos[nombre] for nombre in SISTEMAS if nombre != 'oraculo'} | {'oraculo': G_real}
         rutas_desde = {nombre: {} for nombre in grafos}
 
         for o in nodos_od:

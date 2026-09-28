@@ -88,9 +88,18 @@ def correr_semilla(semilla, variante='base', reusar_dataset=False, solo_ruteo=Fa
     print(f"[{variante} {semilla}] listo", flush=True)
     return semilla
 
-# reactivo_duracion: reactivo que ignora los eventos con 2 h o más de edad (Sección 11)
-SISTEMAS = ['reactivo', 'reactivo_duracion', 'anticipatorio', 'oraculo']
+# reactivo_duracion: reactivo que ignora los eventos con 2 h o más de edad (Sección 11).
+# hibrido: IA en eventos jóvenes + la misma regla en los viejos (Sección 12). Los sufijos
+# _1 y _3 son los umbrales alternativos de la regla (edad >= 1 y >= 3); sin sufijo, >= 2.
+UMBRALES_REGLA = {1: '_1', 2: '', 3: '_3'}
+SISTEMAS = (['reactivo'] + [f'reactivo_duracion{s}' for s in UMBRALES_REGLA.values()] + ['anticipatorio']
+            + [f'hibrido{s}' for s in UMBRALES_REGLA.values()] + ['oraculo'])
 REACTIVOS = ['reactivo', 'reactivo_duracion']
+# Pares (b, a) cuya diferencia b − a se remuestrea: para cada umbral, el híbrido contra la
+# regla sola, contra la IA y contra el reactivo, y la regla contra la IA.
+PARES_HIBRIDO = [p for s in UMBRALES_REGLA.values() for p in (
+    (f'hibrido{s}', f'reactivo_duracion{s}'), (f'hibrido{s}', 'anticipatorio'), (f'hibrido{s}', 'reactivo'),
+    (f'reactivo_duracion{s}', 'anticipatorio'))]
 REPETICIONES_BOOTSTRAP = 5000
 
 def cargar_por_hora(variante, por_edad=False, por_tipo=False):
@@ -130,6 +139,10 @@ def estadisticos_ruteo(muestra):
     res['diferencia_vs_duracion_min'] = total['ahorro_anticipatorio'] - total['ahorro_reactivo_duracion']
     res['diferencia_perdida_vs_duracion_min'] = total['perdida_anticipatorio'] - total['perdida_reactivo_duracion']
     res['diferencia_duracion_vs_reactivo_min'] = total['ahorro_reactivo_duracion'] - total['ahorro_reactivo']
+    for b, a in PARES_HIBRIDO:
+        res[f'pct_capturado_{b}'] = 100 * total[f'ahorro_{b}'] / total['ahorro_oraculo']
+        res[f'dif_ahorro_{b}__{a}'] = total[f'ahorro_{b}'] - total[f'ahorro_{a}']
+        res[f'dif_perdida_{b}__{a}'] = total[f'perdida_{b}'] - total[f'perdida_{a}']
     return res
 
 def probabilidades_ruteo(df_boot):
@@ -140,6 +153,8 @@ def probabilidades_ruteo(df_boot):
         'prob_anticipatorio_ahorra_mas_que_duracion': 100 * (df_boot['diferencia_vs_duracion_min'] > 0).mean(),
         'prob_anticipatorio_pierde_menos_que_duracion': 100 * (df_boot['diferencia_perdida_vs_duracion_min'] > 0).mean(),
         'prob_duracion_ahorra_mas_que_reactivo': 100 * (df_boot['diferencia_duracion_vs_reactivo_min'] > 0).mean(),
+        **{f'prob_{b}_ahorra_mas_que_{a}': 100 * (df_boot[f'dif_ahorro_{b}__{a}'] > 0).mean() for b, a in PARES_HIBRIDO},
+        **{f'prob_{b}_pierde_menos_que_{a}': 100 * (df_boot[f'dif_perdida_{b}__{a}'] > 0).mean() for b, a in PARES_HIBRIDO},
     }
 
 def bootstrap_ruteo(por_hora):
@@ -214,6 +229,7 @@ def agregar_ruteo_por_edad(variante='base'):
         filas.append(fila)
         print(f"hora + {edad}: {fila['horas']} horas, {fila['casos']} casos | ahorro IA {puntual['ahorro_anticipatorio']:.0f} "
               f"vs. reactivo {puntual['ahorro_reactivo']:.0f} vs. reactivo+duración {puntual['ahorro_reactivo_duracion']:.0f} "
+              f"vs. híbrido {puntual['ahorro_hibrido']:.0f} "
               f"(oráculo {puntual['ahorro_oraculo']:.0f}) | IA − reactivo {puntual['diferencia_min']:.0f} "
               f"[{fila['diferencia_min_ic95_bajo']:.0f}; {fila['diferencia_min_ic95_alto']:.0f}], "
               f"P {fila['prob_anticipatorio_ahorra_mas']:.1f}% | IA − reactivo+duración {puntual['diferencia_vs_duracion_min']:.0f} "
@@ -250,7 +266,7 @@ def agregar_ruteo_por_tipo(variante='base'):
         filas.append(fila)
         print(f"hora + {edad} {tipo}: {fila['horas']} horas, {fila['casos']} casos | oráculo {puntual['ahorro_oraculo']:.0f} | "
               f"IA {puntual['ahorro_anticipatorio']:.0f}, reactivo {puntual['ahorro_reactivo']:.0f}, "
-              f"reactivo+duración {puntual['ahorro_reactivo_duracion']:.0f}")
+              f"reactivo+duración {puntual['ahorro_reactivo_duracion']:.0f}, híbrido {puntual['ahorro_hibrido']:.0f}")
     pd.DataFrame(filas).to_csv(archivo_resultados('por_tipo', variante), index=False)
     return pd.DataFrame(filas)
 
@@ -368,6 +384,41 @@ def resumen_sensibilidad_aviso():
               'prob_anticipatorio_ahorra_mas', 'prob_anticipatorio_ahorra_mas_que_duracion']].round(2).to_string(index=False))
     return df
 
+def resumen_hibrido_umbral(variantes):
+    """
+    Tabla de la Sección 12: para cada variante ya corrida y cada umbral de la regla,
+    ahorro, pérdidas y % capturado de la regla sola y del híbrido, y las probabilidades
+    bootstrap de que el híbrido supere a la regla y a la IA.
+    """
+    filas = []
+    for variante in variantes:
+        boot = pd.read_csv(archivo_resultados('bootstrap', variante)).set_index('estadistico')
+        for umbral, s in UMBRALES_REGLA.items():
+            fila = {'variante': variante, 'umbral_edad': umbral}
+            for sistema, nombre in ((f'reactivo_duracion{s}', 'regla'), (f'hibrido{s}', 'hibrido'), ('anticipatorio', 'ia')):
+                for clave in (f'ahorro_{sistema}', f'perdida_{sistema}', f'pct_capturado_{sistema}'):
+                    fila[clave.replace(sistema, nombre)] = boot.loc[clave, 'puntual']
+                    fila[f"{clave.replace(sistema, nombre)}_ic95_bajo"], fila[f"{clave.replace(sistema, nombre)}_ic95_alto"] = \
+                        boot.loc[clave, ['ic95_bajo', 'ic95_alto']]
+            for b, a, nombre in ((f'hibrido{s}', f'reactivo_duracion{s}', 'hibrido_vs_regla'),
+                                 (f'hibrido{s}', 'anticipatorio', 'hibrido_vs_ia'),
+                                 (f'reactivo_duracion{s}', 'anticipatorio', 'regla_vs_ia')):
+                for medida in ('ahorro', 'perdida'):
+                    clave = f'dif_{medida}_{b}__{a}'
+                    fila[f'dif_{medida}_{nombre}'] = boot.loc[clave, 'puntual']
+                    fila[f'dif_{medida}_{nombre}_ic95_bajo'], fila[f'dif_{medida}_{nombre}_ic95_alto'] = \
+                        boot.loc[clave, ['ic95_bajo', 'ic95_alto']]
+                fila[f'prob_ahorra_mas_{nombre}'] = boot.loc[f'prob_{b}_ahorra_mas_que_{a}', 'puntual']
+                fila[f'prob_pierde_menos_{nombre}'] = boot.loc[f'prob_{b}_pierde_menos_que_{a}', 'puntual']
+            filas.append(fila)
+    df = pd.DataFrame(filas)
+    df.to_csv("modelos/resultados_hibrido_umbral.csv", index=False)
+    print("\n=== Híbrido y sensibilidad del umbral de la regla ===")
+    print(df[['variante', 'umbral_edad', 'pct_capturado_regla', 'pct_capturado_ia', 'pct_capturado_hibrido',
+              'prob_ahorra_mas_hibrido_vs_regla', 'prob_ahorra_mas_hibrido_vs_ia',
+              'prob_pierde_menos_hibrido_vs_regla']].round(1).to_string(index=False))
+    return df
+
 def agregar_modelos(variante='base'):
     filas = []
     for semilla in SEMILLAS:
@@ -410,6 +461,8 @@ if __name__ == "__main__":
                         help="Reevalúa solo el ruteo con los datasets y modelos ya guardados")
     parser.add_argument("--sensibilidad-aviso", action="store_true",
                         help="Solo la tabla de sensibilidad a la probabilidad de error del aviso (Sección 11)")
+    parser.add_argument("--hibrido-umbral", action="store_true",
+                        help="Solo la tabla del híbrido y del umbral de la regla para las variantes dadas (Sección 12)")
     parser.add_argument("--paralelo", type=int, default=CORRIDAS_EN_PARALELO)
     args = parser.parse_args()
 
@@ -418,6 +471,9 @@ if __name__ == "__main__":
         sys.exit(0)
     if args.sensibilidad_aviso:
         resumen_sensibilidad_aviso()
+        sys.exit(0)
+    if args.hibrido_umbral:
+        resumen_hibrido_umbral(args.variante)
         sys.exit(0)
     for variante in args.variante:
         if not args.solo_agregar:

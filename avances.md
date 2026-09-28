@@ -2,7 +2,7 @@
 
 **Alumno:** Alan Bellon García
 **Asesor:** M. en Fil. C. Enrique Francisco Soto Astorga
-**Fecha de este reporte:** 2026-09-27 (actualizado — ver [Sección 4](#4-extensión-multi-día--eventos-estocásticos-2026-09-27) , [Sección 5](#5-ubicación-en-la-red-comparación-de-modelos-y-evaluación-sistemática-del-ruteo-2026-09-27) , [Sección 6](#6-capacidad-por-línea-suspensión-de-tramos-tasas-calibradas-y-experimento-multi-semilla-2026-09-27) , [Sección 7](#7-selección-fija-de-modelo-30-semillas-y-edad-del-evento-2026-09-27) , [Sección 8](#8-aviso-de-restablecimiento-y-histgb-en-el-ruteo-2026-09-27) , [Sección 9](#9-aviso-con-error-aditivo-2026-09-27) , [Sección 10](#10-ruteo-por-edad-del-evento-hora-0--1-y--2-2026-09-27) y [Sección 11](#11-sensibilidad-del-aviso-reactivo-con-regla-de-duración-y-hora--1-por-tipo-2026-09-27))
+**Fecha de este reporte:** 2026-09-27 (actualizado — ver [Sección 4](#4-extensión-multi-día--eventos-estocásticos-2026-09-27) , [Sección 5](#5-ubicación-en-la-red-comparación-de-modelos-y-evaluación-sistemática-del-ruteo-2026-09-27) , [Sección 6](#6-capacidad-por-línea-suspensión-de-tramos-tasas-calibradas-y-experimento-multi-semilla-2026-09-27) , [Sección 7](#7-selección-fija-de-modelo-30-semillas-y-edad-del-evento-2026-09-27) , [Sección 8](#8-aviso-de-restablecimiento-y-histgb-en-el-ruteo-2026-09-27) , [Sección 9](#9-aviso-con-error-aditivo-2026-09-27) , [Sección 10](#10-ruteo-por-edad-del-evento-hora-0--1-y--2-2026-09-27) , [Sección 11](#11-sensibilidad-del-aviso-reactivo-con-regla-de-duración-y-hora--1-por-tipo-2026-09-27) y [Sección 12](#12-sistema-híbrido-y-sensibilidad-del-umbral-de-la-regla-2026-09-27))
 
 Este documento resume el estado técnico y metodológico del prototipo descrito en el
 anexo de titulación (*"Modelado y prototipado de un sistema de Inteligencia Artificial
@@ -1510,8 +1510,10 @@ min. En la hora + 2 no hay lluvia; la falla suma 21 min de ahorro posible y el i
      habría que fijarlo con la distribución histórica de duraciones. Aun así, un operador
      conoce esa distribución, así que la regla no usa información que un sistema real no
      tendría.
+     **Actualización (Sección 12):** la ventaja de la regla solo existe con edad ≥ 2; con
+     ≥ 1 o ≥ 3 rinde como el reactivo ingenuo (39–41% del ahorro posible).
 
-### 11.5 Siguiente paso
+### 11.5 Siguiente paso (puntos 1 y 2 ejecutados — ver [Sección 12](#12-sistema-híbrido-y-sensibilidad-del-umbral-de-la-regla-2026-09-27))
 
 1. **Sistema híbrido:** la IA en los tramos con evento joven (edad 0–1) y la regla de
    duración en edad ≥ 2. Por construcción combinaría las menores pérdidas de la IA en las
@@ -1522,6 +1524,185 @@ min. En la hora + 2 no hay lluvia; la falla suma 21 min de ahorro posible y el i
 3. Sin cambios respecto a la Sección 9.3: limitación #4 (horizonte sub-horario, donde el
    requisito de ~96% en "termina / sigue" se traduce a minutos) y #5 (perfiles O-D reales),
    y documentar las fuentes del aviso en el capítulo de metodología.
+
+## 12. Sistema híbrido y sensibilidad del umbral de la regla (2026-09-27)
+
+Ejecución de los puntos 1 y 2 de la Sección 11.5. No se resimuló ni se reentrenó: todo sale
+de reevaluar el ruteo (`--solo-ruteo`) con los datasets y modelos ya guardados de las 8
+variantes × 30 semillas.
+
+Cambios de código:
+
+- `ruteo_anticipatorio.py`:
+  - Nuevo sistema `hibrido`. Usa la congestión que proyecta la IA, salvo en los tramos
+    cuyo evento tiene edad ≥ umbral; ahí aplica la regla de duración de la Sección 11
+    (perfil histórico sin evento del tramo).
+  - La regla y el híbrido se evalúan con tres umbrales: edad ≥ 1, ≥ 2 y ≥ 3. Los sistemas
+    con umbral 1 y 3 llevan sufijo (`reactivo_duracion_1`, `hibrido_3`, ...). Sin sufijo
+    son el umbral por defecto (≥ 2), así que `reactivo_duracion` conserva su significado.
+  - `congestion_con_regla_duracion` recibe la columna base (congestión observada o
+    proyección de la IA) y el umbral.
+- `experimento_semillas.py`:
+  - El bootstrap agrega, para cada umbral, las diferencias pareadas híbrido − regla,
+    híbrido − IA, híbrido − reactivo y regla − IA (ahorro y pérdidas) y sus probabilidades.
+  - Nuevo `--hibrido-umbral`, que arma la tabla resumen y la guarda en
+    `modelos/resultados_hibrido_umbral.csv`.
+
+Ejecución:
+
+```
+python experimento_semillas.py --solo-ruteo --variante base hgb aviso_perfecto aviso_ruidoso aviso_aditivo aviso_error_10 aviso_error_20 aviso_error_33
+python experimento_semillas.py --hibrido-umbral --variante <las mismas 8>
+```
+
+Pruebas:
+
+- Semilla 42 (`base`): todas las columnas de la evaluación de la Sección 11 son idénticas.
+- Tras reevaluar las 8 variantes, los totales de reactivo, regla ≥ 2, IA y oráculo
+  reproducen exactamente la Sección 11, y la tabla de sensibilidad de la Sección 11.1 sale
+  idéntica.
+- Con umbral 3, el híbrido coincide con la IA casi al minuto (diferencia ≤ 4 min): solo 5
+  conglomerados tienen eventos de edad ≥ 3.
+
+### 12.1 Sensibilidad del umbral de la regla
+
+La regla sola, sin modelo, es la misma en todas las variantes:
+
+| Umbral | Ahorro total (min) [IC 95%] | Pérdidas (min) | % del ahorro posible [IC 95%] | Hora 0 / + 1 / + 2 (min) |
+|---|---|---|---|---|
+| Sin regla (reactivo) | 20,154 [−16,622; 57,996] | −29,024 | 40.9 [−66.0; 78.8] | 19,174 / 19,887 / −18,852 |
+| Edad ≥ 1 | 19,309 | −7,400 | 39.2 [−1.8; 72.2] | 19,160 / **141** / 9 |
+| **Edad ≥ 2** | **39,069 [9,850; 72,775]** | −10,031 | **79.4 [44.2; 92.5]** | 19,174 / 19,887 / **9** |
+| Edad ≥ 3 | 20,209 | −28,969 | 41.1 [−65.9; 78.9] | 19,174 / 19,887 / −18,852 |
+
+Ahorro posible (oráculo) por edad: 26,591 / 22,521 / 112 min.
+
+P de que la regla ahorre más que la IA, según el umbral:
+
+| Umbral | IA `base` | IA `aviso_perfecto` | IA `aviso_error_20` |
+|---|---|---|---|
+| Edad ≥ 1 | 24.9% | 1.5% | 5.6% |
+| Edad ≥ 2 | **97.7%** | 71.7% | 91.3% |
+| Edad ≥ 3 | 39.7% | 3.8% | 16.4% |
+
+Probabilidad de que un incidente o falla siga activo en `t + 1` según su edad. Se midió en
+los datasets de `base` (30 semillas). La duración simulada es `1 + Poisson(1)`, recortada
+a 4 h.
+
+| Edad | 0 | 1 | 2 | 3 |
+|---|---|---|---|---|
+| P(sigue en t + 1) | 56.9% | 38.0% | 24.1% | 0% |
+| Filas | 830 | 502 | 191 | 46 |
+
+### 12.2 Sistema híbrido
+
+**Umbral por defecto (edad ≥ 2)**. IC 95% por conglomerados; en las diferencias, positivo
+significa que el híbrido ahorra más o pierde menos:
+
+| Variante | Ahorro híbrido (min) | % del ahorro posible [IC 95%] | Pérdidas híbrido | Δ ahorro vs. regla [IC 95%] | P(híbrido > regla) | Δ pérdidas vs. regla [IC 95%] | Δ ahorro vs. IA [IC 95%] | P(híbrido > IA) |
+|---|---|---|---|---|---|---|---|---|
+| `base` | 24,349 | 49.5 [26.1; 69.7] | −4,616 | −14,721 [−34,300; 685] | 3.2% | **+5,415 [1,111; 10,790]** | +854 [71; 1,904] | 99.8% |
+| `hgb` | 22,271 | 45.2 [14.3; 68.8] | −7,119 | **−16,798 [−38,362; −1,019]** | 1.5% | +2,913 [−707; 6,979] | +1,022 [30; 2,689] | 99.7% |
+| `aviso_perfecto` | 37,124 | 75.4 [60.8; 82.9] | −3,219 | −1,945 [−10,942; 6,705] | 33.5% | **+6,812 [1,650; 12,952]** | +663 [−9; 1,704] | 96.9% |
+| `aviso_ruidoso` | 37,172 | 75.5 [61.9; 83.0] | −2,672 | −1,897 [−11,367; 7,464] | 35.0% | **+7,359 [1,803; 14,068]** | +624 [−9; 1,618] | 96.9% |
+| `aviso_error_10` | 37,076 | 75.3 [60.7; 83.1] | −3,064 | −1,994 [−11,114; 6,854] | 33.5% | **+6,967 [1,746; 13,176]** | +660 [−2; 1,683] | 97.3% |
+| `aviso_error_20` | 31,564 | 64.1 [37.8; 79.3] | −4,268 | −7,506 [−21,631; 3,787] | 10.8% | **+5,764 [1,202; 11,355]** | +668 [−1; 1,706] | 97.5% |
+| `aviso_error_33` | 25,612 | 52.0 [26.6; 72.9] | −4,040 | −13,457 [−33,778; 1,858] | 5.3% | **+5,991 [1,471; 11,532]** | +1,809 [40; 4,170] | 98.7% |
+| `aviso_aditivo` | 25,435 | 51.7 [26.8; 70.8] | −5,016 | −13,635 [−32,133; 806] | 3.5% | **+5,015 [1,039; 9,964]** | +828 [17; 1,915] | 98.5% |
+
+Por edad (`base` / `aviso_perfecto`, min):
+
+| Edad | Ahorro posible | Regla ≥ 2 | IA | Híbrido ≥ 2 |
+|---|---|---|---|---|
+| Hora 0 | 26,591 | 19,174 | 17,095 / 20,742 | 17,095 / 20,742 |
+| Hora + 1 | 22,521 | 19,887 | 7,262 / 16,391 | 7,262 / 16,391 |
+| Hora + 2 | 112 | 9 | −863 / −672 | −9 / −9 |
+
+**Otros umbrales del híbrido** (P de que el híbrido ahorre más que la regla con el mismo
+umbral / que la IA):
+
+| Variante | Umbral 1: % capturado, P(> regla), P(> IA) | Umbral 3: % capturado, P(> regla), P(> IA) |
+|---|---|---|
+| `base` | 35.0%, 34.7%, 5.2% | 47.7%, 60.3%, 86.4% |
+| `aviso_perfecto` | 42.4%, 68.0%, 1.3% | 74.1%, **96.2%**, 86.4% |
+| `aviso_error_20` | 39.8%, 52.9%, 3.1% | 62.8%, 83.6%, 86.4% |
+
+### 12.3 Lectura
+
+1. **El resultado de la Sección 11 depende del umbral.** Solo edad ≥ 2 funciona: la regla
+   captura 79.4% del ahorro posible. Con edad ≥ 1 cae a 39.2%, y con edad ≥ 3 a 41.1%,
+   igual que el reactivo ingenuo.
+   - Con **edad ≥ 1** la regla deja de desviar en la hora + 1. Ahí el 38% de los
+     incidentes sigue, y concentran 22,521 min de ahorro posible; la regla captura 141.
+     Pierde casi todo lo que el reactivo ganaba en esa hora.
+   - Con **edad ≥ 3** la regla no toca la hora + 2 y conserva las −18,852 min de
+     pérdidas del reactivo. Además, a los 3 h de edad ningún evento sigue (duración máxima
+     4 h), así que la regla solo actúa en 5 conglomerados.
+   - Edad ≥ 2 acierta porque en la hora + 2 el costo de seguir desviando (−18,852 min del
+     reactivo) es mucho mayor que el ahorro posible (112 min), aunque el 24% de los
+     incidentes siga activo. En la hora + 1 pasa lo contrario.
+   - **Consecuencia:** la ventaja de la regla es de filo de navaja. Solo existe si el
+     umbral cae justo en la edad donde el balance se invierte, y esa edad es una propiedad
+     de la distribución de duraciones simulada. La salvedad de la Sección 11.4 (punto 6) se
+     confirma: con otra distribución de duraciones, el umbral correcto sería otro. Para que
+     la regla sea un baseline legítimo en la red real, el umbral debe fijarse con
+     duraciones históricas del STC, no con este experimento.
+2. **El híbrido mejora a la IA, pero poco.** Con umbral 2, el híbrido ahorra más que la IA
+   en todas las variantes (P entre 96.9% y 99.8%), pero solo por +600 a +1,800 min. Toda la
+   mejora está en la hora + 2, donde las pérdidas de la IA (−863 min sin aviso) bajan a −9.
+   En las horas 0 y + 1 el híbrido es idéntico a la IA.
+3. **El híbrido no supera a la regla sola en ahorro.** Con umbral 2, la regla gana en todas
+   las variantes:
+   - Sin aviso, la regla ahorra 14,721 min más (P = 3.2% de que el híbrido ahorre más; el
+     IC de dos colas, [−34,300; 685], apenas toca el 0).
+   - Con un aviso preciso (perfecto, ruidoso o 10% de error), la brecha baja a ~−1,950 min
+     y deja de ser significativa (P ≈ 34%).
+   - La causa es la hora + 1: el híbrido usa ahí la IA, y la IA se desvía menos que el
+     reactivo cuando el incidente sigue (7,262 vs. 19,887 min sin aviso; 16,391 con aviso
+     perfecto). La regla, que en la hora + 1 es el reactivo, supone continuidad y acierta
+     más.
+   - El punto 1 de la Sección 11.5 suponía que el híbrido combinaría lo mejor de los dos.
+     No es así: combina las menores pérdidas de la IA con su menor ahorro en la hora + 1.
+4. **Lo que el híbrido sí gana: menos pérdidas que la regla, con IC que excluye 0.** Con
+   umbral 2, el híbrido pierde 5,000 a 7,400 min menos que la regla en todas las variantes
+   con RF (P ≥ 99.6%, IC que excluye 0 en las siete), incluidas las de aviso impreciso.
+   Contra la regla, la IA sola ganaba en pérdidas con IC que tocaba el 0 en `aviso_error_33`
+   y `aviso_aditivo` (Sección 11.4, punto 4). El híbrido corrige eso porque ya no pierde en
+   la hora + 2. Con `hgb` la ventaja no es significativa (IC [−707; 6,979]).
+5. **El híbrido y la regla ofrecen un trade-off, no un ganador.** Con un aviso preciso,
+   el híbrido captura 75% del ahorro posible (la regla, 79%; diferencia no significativa)
+   con 3,200 min de pérdidas en lugar de 10,000. Es decir, ahorra lo mismo y pierde la
+   tercera parte. Sin aviso, la regla ahorra mucho más (79% vs. 50%) a cambio del doble de
+   pérdidas.
+6. **Umbral 3 con aviso: el único caso en que la IA supera a una regla con P ≥ 95%**
+   (96.2%). No vale como argumento, porque la regla ≥ 3 es casi el reactivo ingenuo, y eso
+   ya se sabía (Sección 8.2, punto 4).
+7. **Para la tesis.** La formulación final queda:
+   - Contra un reactivo ingenuo, anticipar reduce el riesgo, y con un aviso que acierte
+     ≥ 96% en "termina / sigue", además ahorra más (Secciones 8–11).
+   - Contra un reactivo con la regla de duración bien calibrada, ni la IA ni el híbrido
+     ahorran más. El híbrido con aviso preciso ahorra lo mismo (diferencia no
+     significativa) y pierde tres veces menos (P = 99.8%).
+   - La ventaja de la regla depende de fijar el umbral justo (edad ≥ 2 en esta simulación);
+     con un umbral una hora antes o después rinde como el reactivo ingenuo o peor. La IA
+     no necesita ese ajuste: aprende la probabilidad de continuación de los datos.
+   - Por eso el argumento defendible a favor de la IA no es que ahorre más, sino que
+     **pierde menos y no depende de calibrar a mano una regla** cuya forma correcta cambia
+     con la distribución de duraciones de cada red.
+
+### 12.4 Siguiente paso
+
+1. **Hora + 1 de incidentes de plataforma**: es donde está toda la brecha entre la IA (o el
+   híbrido) y la regla (Secciones 11.3 y 12.3). Hay dos opciones:
+   - Un umbral de decisión asimétrico para la IA en tramos con incidente: desviar si la
+     probabilidad de que siga supera cierto valor, en lugar de usar el valor esperado.
+   - Un modelo de dos partes: probabilidad de continuación × retraso si sigue.
+2. **Robustez del umbral de la regla ante otra distribución de duraciones.** Resimular con
+   duraciones más largas (p. ej. `1 + Poisson(2)`) y comprobar si el umbral óptimo de la
+   regla se mueve mientras la IA se adapta sola. Eso requiere resimular y reentrenar, no
+   `--solo-ruteo`.
+3. Sin cambios: limitación #4 (horizonte sub-horario) y #5 (perfiles O-D reales), y
+   documentar las fuentes del aviso en el capítulo de metodología.
 
 ---
 
@@ -1611,21 +1792,18 @@ modelo tenga suficientes ejemplos de eventos disruptivos que aprender.
 ## Mensaje de commit
 
 ```
-feat: sensibilidad del aviso, reactivo con regla de duracion y desglose por tipo
+feat: sistema hibrido y sensibilidad del umbral de la regla
 
-- simulador_congestion.py: --prob-error-aviso p (aviso exacto salvo en una
-  fraccion p, donde se equivoca en +-1 h).
-- ruteo_anticipatorio.py: sistema reactivo_duracion (ignora eventos con edad
-  >= 2 usando el perfil historico sin evento del tramo) y tipo_evento por caso.
-- experimento_semillas.py: variantes aviso_error_10/20/33, bootstrap contra
-  el reactivo con regla, agregar_ruteo_por_tipo, --variante multiple y
-  --sensibilidad-aviso. Reevaluadas las 5 variantes previas (totales
-  reproducen secciones 7-10).
-- Resultado: la IA supera al reactivo (P >= 95%) solo si el aviso acierta
-  >= ~96% en termina/sigue (<= 10% de error). La regla de duracion captura
-  79.4% del ahorro posible y supera a la IA sin aviso (P IA = 2.3%) y con
-  aviso perfecto (P = 28%); la IA solo conserva menores perdidas. La hora +1
-  la dominan los incidentes de plataforma (99.9% del ahorro posible), no la
-  lluvia.
-- avances.md: seccion 11.
+- ruteo_anticipatorio.py: sistema hibrido (IA salvo en tramos con evento de
+  edad >= umbral, donde aplica la regla de duracion); regla e hibrido con
+  umbrales 1, 2 y 3.
+- experimento_semillas.py: diferencias pareadas hibrido/regla/IA por umbral
+  y --hibrido-umbral. Reevaluadas 8 variantes con --solo-ruteo (sin
+  reentrenar); totales reproducen la seccion 11.
+- Resultado: la regla solo funciona con edad >= 2 (79.4% del ahorro
+  posible; 39-41% con >= 1 o >= 3). El hibrido supera a la IA por poco
+  (+600 a +1,800 min, P >= 96.9%) pero no a la regla en ahorro (P = 3.2% sin
+  aviso, ~34% con aviso preciso); si pierde 5,000-7,400 min menos que la
+  regla (P >= 99.6%).
+- avances.md: seccion 12.
 ```
