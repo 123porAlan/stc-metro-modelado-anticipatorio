@@ -2,7 +2,7 @@
 
 **Alumno:** Alan Bellon García
 **Asesor:** M. en Fil. C. Enrique Francisco Soto Astorga
-**Fecha de este reporte:** 2026-09-27 (actualizado — ver [Sección 4](#4-extensión-multi-día--eventos-estocásticos-2026-09-27) , [Sección 5](#5-ubicación-en-la-red-comparación-de-modelos-y-evaluación-sistemática-del-ruteo-2026-09-27) , [Sección 6](#6-capacidad-por-línea-suspensión-de-tramos-tasas-calibradas-y-experimento-multi-semilla-2026-09-27) , [Sección 7](#7-selección-fija-de-modelo-30-semillas-y-edad-del-evento-2026-09-27) , [Sección 8](#8-aviso-de-restablecimiento-y-histgb-en-el-ruteo-2026-09-27) , [Sección 9](#9-aviso-con-error-aditivo-2026-09-27) y [Sección 10](#10-ruteo-por-edad-del-evento-hora-0--1-y--2-2026-09-27))
+**Fecha de este reporte:** 2026-09-27 (actualizado — ver [Sección 4](#4-extensión-multi-día--eventos-estocásticos-2026-09-27) , [Sección 5](#5-ubicación-en-la-red-comparación-de-modelos-y-evaluación-sistemática-del-ruteo-2026-09-27) , [Sección 6](#6-capacidad-por-línea-suspensión-de-tramos-tasas-calibradas-y-experimento-multi-semilla-2026-09-27) , [Sección 7](#7-selección-fija-de-modelo-30-semillas-y-edad-del-evento-2026-09-27) , [Sección 8](#8-aviso-de-restablecimiento-y-histgb-en-el-ruteo-2026-09-27) , [Sección 9](#9-aviso-con-error-aditivo-2026-09-27) , [Sección 10](#10-ruteo-por-edad-del-evento-hora-0--1-y--2-2026-09-27) y [Sección 11](#11-sensibilidad-del-aviso-reactivo-con-regla-de-duración-y-hora--1-por-tipo-2026-09-27))
 
 Este documento resume el estado técnico y metodológico del prototipo descrito en el
 anexo de titulación (*"Modelado y prototipado de un sistema de Inteligencia Artificial
@@ -1207,7 +1207,7 @@ apenas por encima de `severidad_evento`.
    horas (media 2). Con pasos sub-horarios (limitación #4) el mismo aviso real ("15 min")
    tendría un error relativo menor; es otra razón para priorizar esa limitación.
 
-### 9.3 Siguiente paso
+### 9.3 Siguiente paso (punto 1 ejecutado — ver [Sección 11](#11-sensibilidad-del-aviso-reactivo-con-regla-de-duración-y-hora--1-por-tipo-2026-09-27))
 
 1. **Sensibilidad a la probabilidad de error del aviso:** variar la fracción de avisos
    con `δ ≠ 0` (p. ej. 10%, 20%, 33%) para encontrar a partir de qué precisión de
@@ -1306,8 +1306,11 @@ Ahorro IA en la hora 0 y la hora + 1 (el reactivo es igual en todas: 19,174 y 19
    `t`, así que un umbral sobre la congestión observada no cambiaría la decisión del
    reactivo; sí la cambiaría una regla simple de duración (p. ej. no desviar por eventos
    con 2 h o más de antigüedad), que captaría esta ventaja sin modelo. No se probó.
+   **Actualización (Sección 11):** se probó; la regla anula las pérdidas del reactivo en la
+   hora + 2 y supera a la IA en total (P de que la IA ahorre más = 2.3% sin aviso, 28% con
+   aviso perfecto).
 
-### 10.3 Siguiente paso
+### 10.3 Siguiente paso (ejecutado — ver [Sección 11](#11-sensibilidad-del-aviso-reactivo-con-regla-de-duración-y-hora--1-por-tipo-2026-09-27))
 
 1. Pendiente de la Sección 9.3: sensibilidad a la probabilidad de error del aviso.
 2. **Reactivo más fuerte:** un reactivo con una regla de duración (ignorar eventos con
@@ -1315,6 +1318,210 @@ Ahorro IA en la hora 0 y la hora + 1 (el reactivo es igual en todas: 19,174 y 19
    menos ingenuo.
 3. Desglosar la hora + 1 por tipo de evento (lluvia, falla, incidente): la lluvia afecta
    líneas completas y puede dominar el número de casos.
+
+## 11. Sensibilidad del aviso, reactivo con regla de duración y hora + 1 por tipo (2026-09-27)
+
+Ejecución de los tres puntos de la Sección 10.3.
+
+Cambios de código:
+
+- `simulador_congestion.py`: argumento `--prob-error-aviso p`. El aviso es exacto salvo en
+  una fracción `p` de los casos, en los que `δ = −1` o `+1` con igual probabilidad:
+  `aviso = max(restante + δ, 0)`. Usa el mismo generador aparte que las Secciones 8 y 9;
+  es excluyente con `--error-aviso-aditivo`.
+- `ruteo_anticipatorio.py`:
+  - Nuevo sistema `reactivo_duracion`, un reactivo con **regla de duración**. En los tramos
+    cuyo evento tiene edad ≥ 2 supone que el evento ya no sigue y cambia la congestión
+    observada por el **perfil histórico sin evento** del tramo: la media de
+    `congestibilidad_t` en las filas de entrenamiento sin evento con el mismo tramo, tipo
+    de día y hora. En el resto de los tramos es idéntico al reactivo. Solo usa días de
+    entrenamiento.
+  - Cada caso O-D guarda además `tipo_evento`, el tipo del evento más reciente que cruza su
+    ruta estática.
+- `experimento_semillas.py`:
+  - Variantes `aviso_error_10`, `aviso_error_20` y `aviso_error_33` (`p` = 0.10, 0.20 y
+    0.33).
+  - El bootstrap agrega las diferencias IA − `reactivo_duracion` y `reactivo_duracion` −
+    reactivo y sus probabilidades.
+  - Nueva `agregar_ruteo_por_tipo`, con un conglomerado por (hora con evento, edad, tipo),
+    que se guarda en `modelos/resultados_semillas_por_tipo[_<variante>].csv`.
+  - `--variante` acepta varias variantes seguidas.
+  - `--sensibilidad-aviso` arma la tabla de la Sección 11.1, con la precisión del aviso
+    medida contra el restante real de `aviso_perfecto`, y la guarda en
+    `modelos/resultados_sensibilidad_aviso.csv`.
+
+Ejecución:
+
+```
+python experimento_semillas.py --solo-ruteo --variante base hgb aviso_perfecto aviso_ruidoso aviso_aditivo
+python experimento_semillas.py --variante aviso_error_10 aviso_error_20 aviso_error_33
+python experimento_semillas.py --sensibilidad-aviso
+python experimento_semillas.py --comparar aviso_perfecto aviso_error_<p>   # p = 10, 20, 33
+```
+
+Pruebas:
+
+- Semilla 42 con `--prob-error-aviso 0.2`: las 16 columnas de `base` son idénticas
+  (`DataFrame.equals`). El aviso difiere del de `aviso_perfecto` en 17% de las filas de
+  incidente o falla. No llega al 20% porque `δ = −1` sobre un restante 0 queda recortado
+  a 0.
+- Semilla 42 (`base`): la evaluación nueva es idéntica a la anterior en todas sus columnas;
+  solo se agregan `tipo_evento` y las dos columnas de `reactivo_duracion`.
+- Al reevaluar las 5 variantes previas × 30 semillas, los totales de IA, reactivo y oráculo
+  reproducen exactamente las Secciones 7.3, 8.1, 9.1 y 10.1.
+- `reactivo_duracion` es idéntico en todas las variantes, porque no depende del modelo. En
+  las horas 0 y + 1 coincide con el reactivo, porque la regla no se activa.
+
+### 11.1 Sensibilidad a la probabilidad de error del aviso
+
+Precisión del aviso sobre 1,569 filas de incidente o falla (30 semillas). IA con RF +
+línea/tramo, bootstrap por conglomerados con IC 95%:
+
+| Variante | P(δ ≠ 0) | Aviso exacto | "Termina / sigue" correcto | Ahorro IA (min) [IC 95%] | % del ahorro posible [IC 95%] | P(IA ahorra más que reactivo) | RMSE con evento |
+|---|---|---|---|---|---|---|---|
+| `base` (sin aviso) | — | — | — | 23,494 [6,434; 43,875] | 47.7 [23.2; 67.6] | 60.4% | 1.179 |
+| `aviso_perfecto` | 0 | 100% | 100% | 36,461 [12,815; 63,490] | 74.1 [57.6; 81.9] | **96.3%** | 1.027 |
+| `aviso_error_10` | 0.10 | 93.6% | 95.9% | 36,416 [12,877; 63,572] | 74.0 [57.3; 82.0] | **96.1%** | 1.038 |
+| `aviso_error_20` | 0.20 | 86.1% | 92.4% | 30,896 [8,535; 56,374] | 62.8 [35.2; 78.1] | 83.7% | 1.072 |
+| `aviso_error_33` | 0.33 | 77.9% | 87.1% | 23,804 [5,638; 45,542] | 48.4 [20.4; 69.5] | 62.0% | 1.102 |
+| `aviso_aditivo` (Sección 9) | 0.67 | 51.1% | 73.3% | 24,606 [6,615; 46,535] | 50.0 [23.7; 69.0] | 63.9% | 1.105 |
+
+Como referencia, `aviso_ruidoso` (Sección 8, error multiplicativo) acierta "termina /
+sigue" en 97.4% y rinde igual que el aviso perfecto (74.2%, P = 96.1%).
+
+**Diferencias pareadas contra `aviso_perfecto`** (variante − `aviso_perfecto`):
+
+| Variante | Δ ahorro (min) [IC 95%] | P(ahorra más) | Δ pérdidas (min) [IC 95%] | Horas mejor / peor / igual |
+|---|---|---|---|---|
+| `aviso_error_10` | −45 [−743; 550] | 47.9% | +163 [−51; 398] | 15 / 16 / 227 |
+| `aviso_error_20` | **−5,566 [−15,380; −160]** | 0.6% | −1,048 [−3,159; 159] | 7 / 20 / 231 |
+| `aviso_error_33` | **−12,657 [−27,676; −2,043]** | 0.0% | −1,968 [−4,634; 89] | 10 / 28 / 220 |
+
+### 11.2 Reactivo con regla de duración
+
+Totales sobre las 258 horas con evento y 525,446 casos. `reactivo_duracion` es el mismo en
+todas las variantes:
+
+| Sistema | Ahorro total (min) [IC 95%] | Pérdidas (min) [IC 95%] | Cambios de ruta | % del ahorro posible [IC 95%] |
+|---|---|---|---|---|
+| Reactivo | 20,154 [−16,622; 57,996] | −29,024 [−50,965; −12,320] | 33,953 | 40.9 [−66.0; 78.8] |
+| **Reactivo + regla de duración** | **39,069 [9,850; 72,775]** | −10,031 [−17,069; −4,180] | 26,766 | **79.4 [44.2; 92.5]** |
+| IA `base` | 23,494 [6,434; 43,875] | −5,483 [−9,744; −2,433] | 16,233 | 47.7 [23.2; 67.6] |
+| IA `aviso_perfecto` | 36,461 [12,815; 63,490] | −3,920 [−6,217; −2,048] | 18,376 | 74.1 [57.6; 81.9] |
+| Oráculo | 49,224 [21,000; 81,549] | 0 | 19,527 | 100 |
+
+La regla sola mejora al reactivo en +18,915 min (IC [3,291; 40,303], P = 100%).
+
+**IA − reactivo con regla de duración:**
+
+| Variante | Δ ahorro (min) [IC 95%] | P(IA ahorra más) | Δ pérdidas (min) [IC 95%] | P(IA pierde menos) |
+|---|---|---|---|---|
+| `base` | **−15,575 [−35,180; −261]** | **2.3%** | +4,548 [75; 9,959] | 97.7% |
+| `hgb` | **−17,821 [−39,496; −2,055]** | 0.9% | +1,888 [−2,111; 6,129] | 81.4% |
+| `aviso_perfecto` | −2,608 [−11,689; 6,108] | 28.3% | +6,111 [853; 12,315] | 99.2% |
+| `aviso_ruidoso` | −2,522 [−12,135; 6,800] | 30.1% | +6,697 [980; 13,430] | 99.4% |
+| `aviso_error_10` | −2,654 [−11,886; 6,170] | 28.1% | +6,274 [903; 12,545] | 99.3% |
+| `aviso_error_20` | −8,174 [−22,211; 3,330] | 8.7% | +5,063 [351; 10,653] | 98.7% |
+| `aviso_error_33` | −15,266 [−35,683; 85] | 2.7% | +4,144 [−1,048; 10,121] | 93.9% |
+| `aviso_aditivo` | **−14,463 [−33,092; −54]** | 2.4% | +4,163 [−18; 9,167] | 97.5% |
+
+Por edad del evento (`base`):
+
+| Edad | Ahorro posible | Reactivo | Reactivo + regla | IA `base` | IA `aviso_perfecto` | P(IA `base` > regla) |
+|---|---|---|---|---|---|---|
+| Hora 0 | 26,591 | 19,174 | 19,174 | 17,095 | 20,742 | 34.3% |
+| Hora + 1 | 22,521 | 19,887 | 19,887 | 7,262 | 16,391 | 2.9% |
+| Hora + 2 | 112 | −18,852 | **9** | −863 | −672 | **0.1%** |
+
+En la hora + 2 la regla no pierde nada (pérdidas 0 contra −890 de la IA `base`) y supera a
+la IA en todas las variantes (P entre 0.0% y 1.7% de que la IA ahorre más).
+
+### 11.3 Hora + 1 por tipo de evento
+
+`base`, 30 semillas. El tipo es el del evento más reciente que cruza la ruta estática del
+caso. Si un tramo tiene varios eventos a la vez, el dataset guarda el más severo.
+
+| Tipo | Horas | Casos (% de la hora + 1) | Horas con ahorro posible | Ahorro posible | Reactivo | IA `base` | IA `aviso_perfecto` | Cambios de ruta reactivo / IA `base` |
+|---|---|---|---|---|---|---|---|---|
+| Falla mecánica | 55 | 89,838 (51.8%) | 4 | 23 | 11 | 2 | 17 | 743 / 57 |
+| Incidente de plataforma | 29 | 57,628 (33.2%) | 10 | **22,499 (99.9%)** | 19,875 | 7,262 | 16,375 | 9,687 / 2,201 |
+| Lluvia | 2 | 25,868 (14.9%) | 0 | 0 | 0 | −1 | −1 | 12 / 26 |
+
+El mismo patrón se ve en la hora 0 y la hora + 2. En la hora 0, la lluvia son 3 horas y
+37,290 casos (13%) con ahorro posible de 1 min, y la falla son 157,216 casos (56%) con 49
+min. En la hora + 2 no hay lluvia; la falla suma 21 min de ahorro posible y el incidente
+91.
+
+### 11.4 Lectura
+
+1. **Requisito de calidad del aviso: al menos ~96% de acierto en "termina / sigue".** La
+   IA supera al reactivo con P ≥ 95% solo si el aviso se equivoca en ±1 hora en 10% de los
+   casos o menos (95.9% de acierto en "termina / sigue"). Con 10% de error rinde igual que
+   el aviso perfecto (Δ −45 min, P = 48%). Con 20% de error (92.4% de acierto) pierde
+   −5,566 min frente al perfecto (IC excluye 0) y P baja a 84%. Con 33% o más de error
+   queda igual que sin aviso (48–50% del ahorro posible). La caída es abrupta entre 10% y
+   20%, no gradual. Es consistente con la Sección 9.2: el aviso solo sirve si mueve la
+   probabilidad de continuación lejos del ~39% que el modelo ya estima. Unos puntos de
+   error bastan para que el modelo lo descuente, y el RMSE con evento sube de forma
+   monótona (1.027 → 1.038 → 1.072 → 1.102). **Requisito para un despliegue real:** el
+   aviso del STC debe acertar si el servicio se restablece en la hora en curso en al menos
+   ~96% de los casos. En pasos de 1 hora, eso equivale a errar la hora de restablecimiento
+   en no más de 1 de cada 10 avisos. No hay datos para saber si el STC cumple ese nivel.
+2. **La ventaja de la IA en la hora + 2 no sobrevive a un reactivo menos ingenuo.** Con la
+   regla de duración, el reactivo pasa de 20,154 a 39,069 min (79.4% del ahorro posible) y
+   supera a la IA sin aviso en −15,575 min (IC [−35,180; −261], P = 2.3% de que la IA
+   ahorre más). La regla elimina las pérdidas del reactivo en la hora + 2 (−18,852 → +9
+   min) sin modelo alguno. Allí también le gana a la IA, que pierde −863 min. Es decir, la
+   ventaja de la IA que la Sección 10.2 atribuyó al final del evento se explica por
+   completo por el error del reactivo ingenuo. Una regla fija de una línea la captura
+   mejor.
+3. **Ni con aviso perfecto la IA supera al reactivo con regla.** La brecha se reduce a
+   −2,608 min (P = 28%) y no es significativa. La IA gana en la hora 0 (+1,568, P = 68%) y
+   pierde en la hora + 1 (−3,496, P = 12%) y en la hora + 2 (−680). Con aviso de 20% de
+   error o peor, la regla vuelve a ganar con claridad.
+4. **Lo que sí sobrevive: la IA pierde menos.** Contra la regla, la IA `base` pierde −5,483
+   min frente a −10,031 (P = 97.7% de que pierda menos). Con un aviso preciso, la ventaja
+   es mayor (+6,100 a +6,700 min, P ≈ 99%, IC que excluye 0). No es robusta en todas las
+   variantes: con `hgb` (P = 81%), `aviso_error_33` y `aviso_aditivo` el IC toca el 0. Las pérdidas de la regla están todas en las horas 0 y + 1 (−7,402 y −2,629),
+   donde la regla no se activa: se desvía por eventos jóvenes que terminan antes de la
+   hora siguiente. Esta ventaja es más chica que la reportada contra el reactivo ingenuo
+   (+4,548 min en vez de +23,542) y su IC queda cerca de 0 ([75; 9,959]).
+5. **La hora + 1 es un problema de incidentes de plataforma, no de lluvia.** La lluvia es
+   el 15% de los casos de la hora + 1 y no tiene ahorro posible: afecta líneas completas,
+   así que no hay ruta alternativa que la evite. Las fallas mecánicas son el 52% de los
+   casos, con 23 min de ahorro posible. Los incidentes de plataforma, con 33% de los
+   casos, concentran el 99.9% del ahorro posible (22,499 de 22,521 min). Toda la brecha de
+   la IA en la hora + 1 (7,262 vs. 19,875 min del reactivo) está en ese tipo. Ahí la IA sin
+   aviso casi no se desvía (2,201 cambios de ruta vs. 9,687), y con aviso perfecto llega a
+   16,375 min, todavía por debajo del reactivo. La hipótesis de la Sección 10.3 (la
+   lluvia domina el número de casos) no se confirma. La lluvia pesa en casos, pero en
+   minutos es irrelevante, y solo aparece en 2–3 horas del set de prueba.
+6. **Para la tesis.** La formulación de las Secciones 9.2 y 10.2 se acota otra vez:
+   - Contra un reactivo ingenuo, anticipar reduce el riesgo (P = 100%) y, con un aviso que
+     acierte ≥ 96% en "termina / sigue", además ahorra más (P ≈ 96%).
+   - Contra un reactivo con una regla simple de duración, la IA **no ahorra más** en
+     ninguna variante (P ≤ 30%). Sin aviso ahorra significativamente menos. Su única
+     ventaja es perder menos en las primeras dos horas del evento (P ≈ 98–99% con RF, con o
+     sin aviso preciso; no significativa con `hgb` ni con avisos de 33% de error o más).
+   - El baseline de comparación debe ser el reactivo con regla de duración, no el reactivo
+     ingenuo. Reportar solo el segundo sobrestima el valor de la IA.
+   - **Salvedad:** el umbral de la regla (edad ≥ 2) se eligió después de ver la Sección 10
+     y coincide con la duración media simulada de los incidentes (2 h). En la red real
+     habría que fijarlo con la distribución histórica de duraciones. Aun así, un operador
+     conoce esa distribución, así que la regla no usa información que un sistema real no
+     tendría.
+
+### 11.5 Siguiente paso
+
+1. **Sistema híbrido:** la IA en los tramos con evento joven (edad 0–1) y la regla de
+   duración en edad ≥ 2. Por construcción combinaría las menores pérdidas de la IA en las
+   primeras horas con las nulas pérdidas de la regla al final. Es el candidato natural a
+   superar a ambos, y se puede evaluar con `--solo-ruteo` sin reentrenar.
+2. **Sensibilidad del umbral de la regla** (edad ≥ 1, ≥ 2, ≥ 3), para ver si el resultado
+   depende de haber elegido el umbral que coincide con la duración media simulada.
+3. Sin cambios respecto a la Sección 9.3: limitación #4 (horizonte sub-horario, donde el
+   requisito de ~96% en "termina / sigue" se traduce a minutos) y #5 (perfiles O-D reales),
+   y documentar las fuentes del aviso en el capítulo de metodología.
 
 ---
 
@@ -1404,16 +1611,21 @@ modelo tenga suficientes ejemplos de eventos disruptivos que aprender.
 ## Mensaje de commit
 
 ```
-feat: ruteo por edad del evento (hora 0, +1, +2)
+feat: sensibilidad del aviso, reactivo con regla de duracion y desglose por tipo
 
-- ruteo_anticipatorio.py: cada caso guarda la edad del evento que cruza su
-  ruta estatica; resumen restringido a hora 0, +1 y +2 (--resumen-edad).
-- experimento_semillas.py: bootstrap por edad (agregar_ruteo_por_edad),
-  bootstrap factorizado y modo --solo-ruteo. Reevaluadas las 5 variantes;
-  los totales reproducen las secciones 7-9.
-- Resultado: la IA no supera al reactivo en la hora 0 (P = 34% sin aviso,
-  68% con aviso perfecto) y pierde en la hora +1 (P = 2.9%); toda su ventaja
-  viene de la hora +2 (+17,989 min, P = 99.9%), cuando el evento ya termina
-  y el reactivo sigue desviando.
-- avances.md: seccion 10.
+- simulador_congestion.py: --prob-error-aviso p (aviso exacto salvo en una
+  fraccion p, donde se equivoca en +-1 h).
+- ruteo_anticipatorio.py: sistema reactivo_duracion (ignora eventos con edad
+  >= 2 usando el perfil historico sin evento del tramo) y tipo_evento por caso.
+- experimento_semillas.py: variantes aviso_error_10/20/33, bootstrap contra
+  el reactivo con regla, agregar_ruteo_por_tipo, --variante multiple y
+  --sensibilidad-aviso. Reevaluadas las 5 variantes previas (totales
+  reproducen secciones 7-10).
+- Resultado: la IA supera al reactivo (P >= 95%) solo si el aviso acierta
+  >= ~96% en termina/sigue (<= 10% de error). La regla de duracion captura
+  79.4% del ahorro posible y supera a la IA sin aviso (P IA = 2.3%) y con
+  aviso perfecto (P = 28%); la IA solo conserva menores perdidas. La hora +1
+  la dominan los incidentes de plataforma (99.9% del ahorro posible), no la
+  lluvia.
+- avances.md: seccion 11.
 ```

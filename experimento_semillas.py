@@ -35,6 +35,11 @@ VARIANTES = {
     # Error aditivo δ ∈ {−1, 0, +1} (ver avances.md, Sección 9): a diferencia del ruido
     # multiplicativo, puede anunciar 0 cuando el incidente sigue.
     'aviso_aditivo': {'simulador': ['--error-aviso-aditivo', '1'], 'entrenador': [], 'dataset_de': None},
+    # Sensibilidad a la probabilidad de error (ver avances.md, Sección 11): el aviso es exacto
+    # salvo en una fracción p de los casos, donde se equivoca en ±1 hora. aviso_aditivo
+    # equivale a p = 2/3 y aviso_perfecto a p = 0.
+    **{f'aviso_error_{pct}': {'simulador': ['--prob-error-aviso', str(pct / 100)], 'entrenador': [], 'dataset_de': None}
+       for pct in (10, 20, 33)},
 }
 
 def archivo_resultados(nombre, variante):
@@ -83,14 +88,17 @@ def correr_semilla(semilla, variante='base', reusar_dataset=False, solo_ruteo=Fa
     print(f"[{variante} {semilla}] listo", flush=True)
     return semilla
 
-SISTEMAS = ['reactivo', 'anticipatorio', 'oraculo']
+# reactivo_duracion: reactivo que ignora los eventos con 2 h o más de edad (Sección 11)
+SISTEMAS = ['reactivo', 'reactivo_duracion', 'anticipatorio', 'oraculo']
+REACTIVOS = ['reactivo', 'reactivo_duracion']
 REPETICIONES_BOOTSTRAP = 5000
 
-def cargar_por_hora(variante, por_edad=False):
+def cargar_por_hora(variante, por_edad=False, por_tipo=False):
     """
     Casos O-D de todas las semillas, sumados por hora con evento (semilla, fecha, hora).
     Con por_edad=True se separan además por la edad del evento que cruza cada caso, de
-    modo que una hora puede aportar un conglomerado a cada edad.
+    modo que una hora puede aportar un conglomerado a cada edad; con por_tipo=True, también
+    por el tipo de ese evento.
     """
     filas = []
     for semilla in SEMILLAS:
@@ -104,7 +112,7 @@ def cargar_por_hora(variante, por_edad=False):
 
     columnas = [f'ahorro_{s}' for s in SISTEMAS] + [f'perdida_{s}' for s in SISTEMAS] + \
                [f'cambio_ruta_{s}' for s in SISTEMAS]
-    claves = ['semilla', 'fecha', 'hora'] + (['edad_evento'] if por_edad else [])
+    claves = ['semilla', 'fecha', 'hora'] + (['edad_evento'] if por_edad else []) + (['tipo_evento'] if por_tipo else [])
     por_hora = df_eval.groupby(claves)[columnas].sum()
     por_hora['casos'] = df_eval.groupby(claves).size()
     return por_hora
@@ -115,11 +123,24 @@ def estadisticos_ruteo(muestra):
     for s in SISTEMAS:
         res[f'ahorro_{s}'] = total[f'ahorro_{s}']
         res[f'perdida_{s}'] = total[f'perdida_{s}']
-    for s in ['reactivo', 'anticipatorio']:
+    for s in REACTIVOS + ['anticipatorio']:
         res[f'pct_capturado_{s}'] = 100 * total[f'ahorro_{s}'] / total['ahorro_oraculo']
     res['diferencia_min'] = total['ahorro_anticipatorio'] - total['ahorro_reactivo']
     res['diferencia_perdida_min'] = total['perdida_anticipatorio'] - total['perdida_reactivo']
+    res['diferencia_vs_duracion_min'] = total['ahorro_anticipatorio'] - total['ahorro_reactivo_duracion']
+    res['diferencia_perdida_vs_duracion_min'] = total['perdida_anticipatorio'] - total['perdida_reactivo_duracion']
+    res['diferencia_duracion_vs_reactivo_min'] = total['ahorro_reactivo_duracion'] - total['ahorro_reactivo']
     return res
+
+def probabilidades_ruteo(df_boot):
+    """P bootstrap (%) de que la IA supere a cada reactivo, y de que la regla de duración mejore al reactivo."""
+    return {
+        'prob_anticipatorio_ahorra_mas': 100 * (df_boot['diferencia_min'] > 0).mean(),
+        'prob_anticipatorio_pierde_menos': 100 * (df_boot['diferencia_perdida_min'] > 0).mean(),
+        'prob_anticipatorio_ahorra_mas_que_duracion': 100 * (df_boot['diferencia_vs_duracion_min'] > 0).mean(),
+        'prob_anticipatorio_pierde_menos_que_duracion': 100 * (df_boot['diferencia_perdida_vs_duracion_min'] > 0).mean(),
+        'prob_duracion_ahorra_mas_que_reactivo': 100 * (df_boot['diferencia_duracion_vs_reactivo_min'] > 0).mean(),
+    }
 
 def bootstrap_ruteo(por_hora):
     """Estadísticos puntuales y remuestreos por conglomerados (filas de por_hora completas)."""
@@ -162,12 +183,9 @@ def agregar_ruteo(variante='base'):
         bajo, alto = df_boot[clave].quantile([0.025, 0.975])
         filas_ic.append({'estadistico': clave, 'puntual': valor, 'ic95_bajo': bajo, 'ic95_alto': alto})
         print(f"{clave}: {valor:.1f} [IC 95% bootstrap: {bajo:.1f}, {alto:.1f}]")
-    prob_ahorro = 100 * (df_boot['diferencia_min'] > 0).mean()
-    prob_perdida = 100 * (df_boot['diferencia_perdida_min'] > 0).mean()
-    print(f"Probabilidad bootstrap de que el anticipatorio ahorre más que el reactivo: {prob_ahorro:.0f}%")
-    print(f"Probabilidad bootstrap de que el anticipatorio pierda menos que el reactivo: {prob_perdida:.0f}%")
-    filas_ic.append({'estadistico': 'prob_anticipatorio_ahorra_mas', 'puntual': prob_ahorro})
-    filas_ic.append({'estadistico': 'prob_anticipatorio_pierde_menos', 'puntual': prob_perdida})
+    for clave, p in probabilidades_ruteo(df_boot).items():
+        print(f"{clave}: {p:.1f}%")
+        filas_ic.append({'estadistico': clave, 'puntual': p})
     pd.DataFrame(filas_ic).to_csv(archivo_resultados('bootstrap', variante), index=False)
     return por_hora
 
@@ -192,17 +210,48 @@ def agregar_ruteo_por_edad(variante='base'):
         for clave, valor in puntual.items():
             fila[clave] = valor
             fila[f'{clave}_ic95_bajo'], fila[f'{clave}_ic95_alto'] = df_boot[clave].quantile([0.025, 0.975])
-        fila['prob_anticipatorio_ahorra_mas'] = 100 * (df_boot['diferencia_min'] > 0).mean()
-        fila['prob_anticipatorio_pierde_menos'] = 100 * (df_boot['diferencia_perdida_min'] > 0).mean()
+        fila.update(probabilidades_ruteo(df_boot))
         filas.append(fila)
         print(f"hora + {edad}: {fila['horas']} horas, {fila['casos']} casos | ahorro IA {puntual['ahorro_anticipatorio']:.0f} "
-              f"vs. reactivo {puntual['ahorro_reactivo']:.0f} (oráculo {puntual['ahorro_oraculo']:.0f}) | "
-              f"diferencia {puntual['diferencia_min']:.0f} [{fila['diferencia_min_ic95_bajo']:.0f}; "
-              f"{fila['diferencia_min_ic95_alto']:.0f}], P(IA ahorra más) {fila['prob_anticipatorio_ahorra_mas']:.1f}% | "
-              f"pérdidas IA {puntual['perdida_anticipatorio']:.0f} vs. reactivo {puntual['perdida_reactivo']:.0f}")
+              f"vs. reactivo {puntual['ahorro_reactivo']:.0f} vs. reactivo+duración {puntual['ahorro_reactivo_duracion']:.0f} "
+              f"(oráculo {puntual['ahorro_oraculo']:.0f}) | IA − reactivo {puntual['diferencia_min']:.0f} "
+              f"[{fila['diferencia_min_ic95_bajo']:.0f}; {fila['diferencia_min_ic95_alto']:.0f}], "
+              f"P {fila['prob_anticipatorio_ahorra_mas']:.1f}% | IA − reactivo+duración {puntual['diferencia_vs_duracion_min']:.0f} "
+              f"[{fila['diferencia_vs_duracion_min_ic95_bajo']:.0f}; {fila['diferencia_vs_duracion_min_ic95_alto']:.0f}], "
+              f"P {fila['prob_anticipatorio_ahorra_mas_que_duracion']:.1f}%")
     fuera = por_hora[~por_hora.index.get_level_values('edad_evento').isin(EDADES_REPORTADAS)]
     print(f"Excluidos (edad >= 3): {len(fuera)} conglomerados, {int(fuera['casos'].sum())} casos")
     pd.DataFrame(filas).to_csv(archivo_resultados('por_edad', variante), index=False)
+    return pd.DataFrame(filas)
+
+def agregar_ruteo_por_tipo(variante='base'):
+    """
+    Desglose de cada edad del evento por tipo del evento que cruza el caso (lluvia, falla
+    mecánica, incidente de plataforma). Un conglomerado por (hora con evento, edad, tipo).
+    Sirve para ver si la lluvia, que afecta líneas completas, domina el número de casos.
+    """
+    por_hora = cargar_por_hora(variante, por_edad=True, por_tipo=True)
+    filas = []
+    print(f"\n=== [{variante}] Ruteo por edad y tipo de evento ===")
+    for (edad, tipo), grupo in por_hora.groupby(level=['edad_evento', 'tipo_evento']):
+        if edad not in EDADES_REPORTADAS:
+            continue
+        puntual, df_boot = bootstrap_ruteo(grupo)
+        fila = {'edad_evento': edad, 'tipo_evento': tipo, 'horas': len(grupo), 'casos': int(grupo['casos'].sum()),
+                'horas_con_ahorro_posible': int((grupo['ahorro_oraculo'] > 0.5).sum())}
+        for s in SISTEMAS:
+            fila[f'cambio_ruta_{s}'] = int(grupo[f'cambio_ruta_{s}'].sum())
+        for clave, valor in puntual.items():
+            fila[clave] = valor
+            if not df_boot.empty:
+                fila[f'{clave}_ic95_bajo'], fila[f'{clave}_ic95_alto'] = df_boot[clave].quantile([0.025, 0.975])
+        if not df_boot.empty:
+            fila.update(probabilidades_ruteo(df_boot))
+        filas.append(fila)
+        print(f"hora + {edad} {tipo}: {fila['horas']} horas, {fila['casos']} casos | oráculo {puntual['ahorro_oraculo']:.0f} | "
+              f"IA {puntual['ahorro_anticipatorio']:.0f}, reactivo {puntual['ahorro_reactivo']:.0f}, "
+              f"reactivo+duración {puntual['ahorro_reactivo_duracion']:.0f}")
+    pd.DataFrame(filas).to_csv(archivo_resultados('por_tipo', variante), index=False)
     return pd.DataFrame(filas)
 
 def comparar_variantes(variante_a, variante_b):
@@ -219,7 +268,7 @@ def comparar_variantes(variante_a, variante_b):
     if len(comunes) != len(union):
         print(f"AVISO: {len(union) - len(comunes)} horas no están en ambas variantes; se comparan solo las {len(comunes)} comunes")
     a, b = a.loc[comunes], b.loc[comunes]
-    for s in ('reactivo', 'oraculo'):
+    for s in ('reactivo', 'reactivo_duracion', 'oraculo'):
         desajuste = (a[f'ahorro_{s}'] - b[f'ahorro_{s}']).abs().max()
         if desajuste > 1e-6:
             print(f"AVISO: el ahorro del {s} difiere entre variantes (máx. {desajuste:.3f} min por hora)")
@@ -274,6 +323,51 @@ def comparar_variantes(variante_a, variante_b):
     pd.DataFrame(filas).to_csv(f"modelos/comparacion_pareada_{variante_b}_vs_{variante_a}.csv", index=False)
     return pareado
 
+# Variantes de la sensibilidad del aviso, de menor a mayor probabilidad de error (Sección 11)
+SENSIBILIDAD_AVISO = [('aviso_perfecto', 0.0), ('aviso_error_10', 0.10), ('aviso_error_20', 0.20),
+                      ('aviso_error_33', 0.33), ('aviso_aditivo', 2 / 3)]
+
+def precision_aviso(variante):
+    """
+    Acierto del aviso en la distinción "termina en esta hora / sigue" y en el número exacto
+    de horas, sobre las filas de incidente o falla de todas las semillas. El restante real
+    se toma del dataset de aviso_perfecto de la misma semilla (mismos eventos).
+    """
+    exacto, binario, n = 0, 0, 0
+    for semilla in SEMILLAS:
+        columnas = ['hay_evento', 'tipo_evento', 'horas_restantes_anunciadas']
+        real = pd.read_csv(rutas_semilla(semilla, 'aviso_perfecto')['dataset'], usecols=columnas)
+        aviso = pd.read_csv(rutas_semilla(semilla, variante)['dataset'], usecols=columnas)
+        filas = (real['hay_evento'] == 1) & (real['tipo_evento'] != 'lluvia')
+        r, a = real.loc[filas, 'horas_restantes_anunciadas'], aviso.loc[filas, 'horas_restantes_anunciadas']
+        exacto += int((r == a).sum())
+        binario += int(((r == 0) == (a == 0)).sum())
+        n += int(filas.sum())
+    return 100 * exacto / n, 100 * binario / n, n
+
+def resumen_sensibilidad_aviso():
+    """Tabla de la sensibilidad a la probabilidad de error del aviso con las variantes ya corridas."""
+    filas = []
+    for variante, p in [('base', float('nan'))] + SENSIBILIDAD_AVISO:
+        boot = pd.read_csv(archivo_resultados('bootstrap', variante)).set_index('estadistico')
+        fila = {'variante': variante, 'prob_error': p}
+        if variante != 'base':
+            fila['pct_aviso_exacto'], fila['pct_termina_sigue_correcto'], fila['filas_aviso'] = precision_aviso(variante)
+        for clave in ('ahorro_anticipatorio', 'perdida_anticipatorio', 'pct_capturado_anticipatorio',
+                      'diferencia_min', 'diferencia_vs_duracion_min'):
+            fila[clave] = boot.loc[clave, 'puntual']
+            fila[f'{clave}_ic95_bajo'], fila[f'{clave}_ic95_alto'] = boot.loc[clave, ['ic95_bajo', 'ic95_alto']]
+        for clave in ('prob_anticipatorio_ahorra_mas', 'prob_anticipatorio_ahorra_mas_que_duracion',
+                      'prob_anticipatorio_pierde_menos_que_duracion'):
+            fila[clave] = boot.loc[clave, 'puntual']
+        filas.append(fila)
+    df = pd.DataFrame(filas)
+    df.to_csv("modelos/resultados_sensibilidad_aviso.csv", index=False)
+    print("\n=== Sensibilidad a la probabilidad de error del aviso ===")
+    print(df[['variante', 'prob_error', 'pct_termina_sigue_correcto', 'pct_capturado_anticipatorio',
+              'prob_anticipatorio_ahorra_mas', 'prob_anticipatorio_ahorra_mas_que_duracion']].round(2).to_string(index=False))
+    return df
+
 def agregar_modelos(variante='base'):
     filas = []
     for semilla in SEMILLAS:
@@ -304,7 +398,8 @@ def agregar_modelos(variante='base'):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Pipeline multi-semilla por variante y comparación pareada.")
-    parser.add_argument("--variante", default='base', choices=list(VARIANTES))
+    parser.add_argument("--variante", nargs='+', default=['base'], choices=list(VARIANTES),
+                        help="Una o más variantes; se corren y agregan en orden")
     parser.add_argument("--reusar-dataset", action="store_true",
                         help="Omite el simulador si el dataset de la semilla ya existe")
     parser.add_argument("--solo-agregar", action="store_true",
@@ -313,15 +408,22 @@ if __name__ == "__main__":
                         help="Solo la comparación pareada B − A entre dos variantes ya corridas")
     parser.add_argument("--solo-ruteo", action="store_true",
                         help="Reevalúa solo el ruteo con los datasets y modelos ya guardados")
+    parser.add_argument("--sensibilidad-aviso", action="store_true",
+                        help="Solo la tabla de sensibilidad a la probabilidad de error del aviso (Sección 11)")
     parser.add_argument("--paralelo", type=int, default=CORRIDAS_EN_PARALELO)
     args = parser.parse_args()
 
     if args.comparar:
         comparar_variantes(*args.comparar)
         sys.exit(0)
-    if not args.solo_agregar:
-        with ThreadPoolExecutor(max_workers=args.paralelo) as ejecutor:
-            list(ejecutor.map(lambda s: correr_semilla(s, args.variante, args.reusar_dataset, args.solo_ruteo), SEMILLAS))
-    agregar_modelos(args.variante)
-    agregar_ruteo(args.variante)
-    agregar_ruteo_por_edad(args.variante)
+    if args.sensibilidad_aviso:
+        resumen_sensibilidad_aviso()
+        sys.exit(0)
+    for variante in args.variante:
+        if not args.solo_agregar:
+            with ThreadPoolExecutor(max_workers=args.paralelo) as ejecutor:
+                list(ejecutor.map(lambda s: correr_semilla(s, variante, args.reusar_dataset, args.solo_ruteo), SEMILLAS))
+        agregar_modelos(variante)
+        agregar_ruteo(variante)
+        agregar_ruteo_por_edad(variante)
+        agregar_ruteo_por_tipo(variante)

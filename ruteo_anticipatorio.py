@@ -122,9 +122,14 @@ else:
 # - oráculo: congestión real de t+1 (cota superior: el mejor ahorro posible).
 # Cada caso guarda además la edad del evento que cruza su ruta estática (0 = primera hora
 # del evento, 1 = hora + 1, ...; si cruza varios, el más reciente), para ver si la ventaja
-# de anticipar se concentra al inicio del evento, cuando menos se sabe si va a seguir.
+# de anticipar se concentra al inicio del evento, cuando menos se sabe si va a seguir, y el
+# tipo de ese evento (lluvia, falla o incidente), para ver qué tipo domina cada edad.
+# - reactivo_duracion: reactivo con una regla de duración (ver avances.md, Sección 11). En
+#   los tramos cuyo evento tiene EDAD_IGNORADA horas o más supone que el evento ya no sigue
+#   y usa el perfil histórico sin evento del tramo en lugar de la congestión observada.
 EDADES_REPORTADAS = [0, 1, 2]
-SISTEMAS = ['reactivo', 'anticipatorio', 'oraculo']
+EDAD_IGNORADA = 2
+SISTEMAS = ['reactivo', 'reactivo_duracion', 'anticipatorio', 'oraculo']
 
 def resumir(df_eval):
     ahorro_posible = (df_eval['tiempo_real_estatico'] - df_eval['tiempo_real_oraculo']).sum()
@@ -161,6 +166,24 @@ def resumir_por_edad(df_eval):
         filas.append(resumen)
     return pd.concat(filas, ignore_index=True) if filas else pd.DataFrame()
 
+def perfil_sin_evento(df_entrenamiento):
+    """
+    Congestión típica de cada tramo sin evento: media de congestibilidad_t en las filas de
+    entrenamiento sin evento, por (tramo, tipo de día, hora). Es lo que el reactivo con
+    regla de duración supone que habrá cuando descarta un evento viejo. Solo usa días de
+    entrenamiento, así que no filtra información del set de prueba.
+    """
+    sin_evento = df_entrenamiento[df_entrenamiento['hay_evento'] == 0]
+    return sin_evento.groupby(['nodo_origen', 'nodo_destino', 'tipo_dia', 'hora'])['congestibilidad_t'].mean()
+
+def congestion_con_regla_duracion(df_hora, perfil):
+    """congestibilidad_t, salvo en tramos con evento de edad >= EDAD_IGNORADA (perfil sin evento; 0 si no hay)."""
+    viejo = df_hora['edad_evento'] >= EDAD_IGNORADA
+    claves = pd.MultiIndex.from_frame(df_hora.loc[viejo, ['nodo_origen', 'nodo_destino', 'tipo_dia', 'hora']])
+    congestion = df_hora['congestibilidad_t'].copy()
+    congestion[viejo] = perfil.reindex(claves).fillna(0.0).to_numpy()
+    return congestion
+
 def evaluar_ruteo_en_eventos():
     print("\n\n=======================================================")
     print("📊 EVALUACIÓN SISTEMÁTICA: horas con evento en días no vistos")
@@ -169,6 +192,7 @@ def evaluar_ruteo_en_eventos():
     posterior_al_corte = (df_contexto['fecha'] > fecha_inicio) | (
         (df_contexto['fecha'] == fecha_inicio) & (df_contexto['hora'] > hora_inicio))
     df_test = df_contexto[posterior_al_corte]
+    perfil = perfil_sin_evento(df_contexto[~posterior_al_corte])
     horas_evento = df_test[df_test['hay_evento'] == 1][['fecha', 'hora']].drop_duplicates().sort_values(['fecha', 'hora'])
     print(f"Horas con evento en el set de prueba: {len(horas_evento)}")
 
@@ -187,12 +211,14 @@ def evaluar_ruteo_en_eventos():
     for fecha, hora in horas_evento.itertuples(index=False):
         df_hora = proyectar_hora(fecha, hora)
         con_evento = df_hora[df_hora['hay_evento'] == 1]
-        # tramo afectado -> edad de su evento (el dataset guarda el evento más severo del tramo)
-        afectados = {frozenset(t): edad for *t, edad in zip(con_evento['nodo_origen'], con_evento['nodo_destino'],
-                                                            con_evento['edad_evento'])}
+        # tramo afectado -> (edad, tipo) de su evento (el dataset guarda el evento más severo del tramo)
+        afectados = {frozenset((u, v)): (edad, tipo) for u, v, edad, tipo in zip(
+            con_evento['nodo_origen'], con_evento['nodo_destino'], con_evento['edad_evento'], con_evento['tipo_evento'])}
+        df_hora['congestion_regla_duracion'] = congestion_con_regla_duracion(df_hora, perfil)
         G_real = grafo_con_retraso(df_hora, TARGET)
         grafos = {
             'reactivo': grafo_con_retraso(df_hora, 'congestibilidad_t'),
+            'reactivo_duracion': grafo_con_retraso(df_hora, 'congestion_regla_duracion'),
             'anticipatorio': grafo_con_retraso(df_hora, 'retraso_predicho'),
             'oraculo': G_real,
         }
@@ -203,13 +229,15 @@ def evaluar_ruteo_en_eventos():
                 if o == d:
                     continue
                 ruta_est = rutas_estaticas[o][d]
-                edades = [afectados[frozenset(t)] for t in zip(ruta_est[:-1], ruta_est[1:]) if frozenset(t) in afectados]
-                if not edades:
+                eventos = [afectados[frozenset(t)] for t in zip(ruta_est[:-1], ruta_est[1:]) if frozenset(t) in afectados]
+                if not eventos:
                     continue
+                # El evento más reciente de la ruta (a igual edad, el primero en el recorrido)
+                edad, tipo = min(eventos, key=lambda e: e[0])
                 registro = {
                     'fecha': fecha.date(), 'hora': hora,
                     'origen': G_base.nodes[o]['nombre'], 'destino': G_base.nodes[d]['nombre'],
-                    'edad_evento': min(edades),
+                    'edad_evento': edad, 'tipo_evento': tipo,
                     'tiempo_real_estatico': tiempo_ruta(G_real, ruta_est),
                 }
                 for nombre, G in grafos.items():

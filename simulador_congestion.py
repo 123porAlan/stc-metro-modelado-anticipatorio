@@ -17,11 +17,18 @@ parser.add_argument("--error-aviso-aditivo", type=int, default=None,
                     help="K: suma al aviso un error entero δ uniforme en {-K, ..., K} (ver avances.md, "
                          "Sección 9). Puede anunciar 0 cuando el evento sigue. Se combina con --ruido-aviso "
                          "(σ = 0 si no se pasa).")
+parser.add_argument("--prob-error-aviso", type=float, default=None,
+                    help="p: con probabilidad p el aviso se equivoca en ±1 hora (δ = −1 o +1 con igual "
+                         "probabilidad); si no, es exacto (ver avances.md, Sección 11). No se combina con "
+                         "--error-aviso-aditivo.")
 args = parser.parse_args()
-# El aviso se genera si se pidió cualquiera de sus dos errores.
-GENERAR_AVISO = args.ruido_aviso is not None or args.error_aviso_aditivo is not None
+if args.prob_error_aviso is not None and args.error_aviso_aditivo is not None:
+    parser.error("--prob-error-aviso y --error-aviso-aditivo son excluyentes")
+# El aviso se genera si se pidió cualquiera de sus errores.
+GENERAR_AVISO = any(a is not None for a in (args.ruido_aviso, args.error_aviso_aditivo, args.prob_error_aviso))
 SIGMA_AVISO = args.ruido_aviso or 0.0
 ERROR_ADITIVO_AVISO = args.error_aviso_aditivo or 0
+PROB_ERROR_AVISO = args.prob_error_aviso or 0.0
 
 print("Cargando infraestructura (Grafo Base)...")
 G_base = nx.read_gexf("grafo_base_metro.gexf")
@@ -255,7 +262,8 @@ print(f"Semilla de eventos estocásticos: {args.semilla}")
 # eventos y el dataset dejaría de ser comparable con el de la misma semilla sin aviso.
 rng_aviso = np.random.default_rng(args.semilla + 1_000_000)
 if GENERAR_AVISO:
-    print(f"Aviso de restablecimiento con ruido σ = {SIGMA_AVISO} y error aditivo ±{ERROR_ADITIVO_AVISO}")
+    print(f"Aviso de restablecimiento con ruido σ = {SIGMA_AVISO}, error aditivo ±{ERROR_ADITIVO_AVISO} "
+          f"y probabilidad de error ±1 = {PROB_ERROR_AVISO}")
 
 def horas_restantes_anunciadas(evento, hora):
     """
@@ -263,13 +271,16 @@ def horas_restantes_anunciadas(evento, hora):
     publica para incidentes y fallas; la lluvia no lo trae (-1). Restante real = horas
     completas que el evento seguirá activo después de esta (0 = termina al cerrar la hora).
     El ruido multiplicativo (log-normal) nunca se equivoca con un evento que termina en esta
-    hora; el error aditivo δ sí (anuncia 0 cuando sigue, o 1 cuando termina).
+    hora; el error aditivo δ sí (anuncia 0 cuando sigue, o 1 cuando termina). Con
+    --prob-error-aviso, δ = ±1 solo en una fracción p de los avisos.
     """
     if evento['tipo_evento'] == 'lluvia':
         return -1
     restante_real = max(evento['hora_inicio'] + evento['duracion'] - hora - 1, 0)
     epsilon = rng_aviso.normal(0, SIGMA_AVISO) if SIGMA_AVISO > 0 else 0.0
     delta = int(rng_aviso.integers(-ERROR_ADITIVO_AVISO, ERROR_ADITIVO_AVISO + 1)) if ERROR_ADITIVO_AVISO > 0 else 0
+    if PROB_ERROR_AVISO > 0 and rng_aviso.random() < PROB_ERROR_AVISO:
+        delta = int(rng_aviso.choice([-1, 1]))
     return max(int(round(restante_real * np.exp(epsilon))) + delta, 0)
 datos_ml = []
 total_eventos_generados = 0
