@@ -10,6 +10,9 @@ import numpy as np
 parser = argparse.ArgumentParser(description="Simula la congestión horaria de la red para los días del manifiesto.")
 parser.add_argument("--semilla", type=int, default=42, help="Semilla de los eventos estocásticos")
 parser.add_argument("--salida", default="datos_procesados/dataset_features_entrenamiento.csv")
+parser.add_argument("--ruido-aviso", type=float, default=None,
+                    help="σ del ruido log-normal del aviso de restablecimiento (0 = aviso perfecto). "
+                         "Sin este argumento no se genera la columna horas_restantes_anunciadas.")
 args = parser.parse_args()
 
 print("Cargando infraestructura (Grafo Base)...")
@@ -240,6 +243,25 @@ def obtener_tramos_ruta(origen_nombre, destino_nombre):
 
 rng = np.random.default_rng(args.semilla)
 print(f"Semilla de eventos estocásticos: {args.semilla}")
+# Generador aparte para el ruido del aviso: sortear de `rng` desplazaría la secuencia de
+# eventos y el dataset dejaría de ser comparable con el de la misma semilla sin aviso.
+rng_aviso = np.random.default_rng(args.semilla + 1_000_000)
+if args.ruido_aviso is not None:
+    print(f"Aviso de restablecimiento con ruido σ = {args.ruido_aviso}")
+
+def horas_restantes_anunciadas(evento, hora):
+    """
+    Aviso de tiempo estimado de restablecimiento (ver avances.md, Sección 7.5). El STC lo
+    publica para incidentes y fallas; la lluvia no lo trae (-1). Restante real = horas
+    completas que el evento seguirá activo después de esta (0 = termina al cerrar la hora).
+    El ruido es multiplicativo (log-normal): un evento que termina en esta hora siempre se
+    anuncia bien.
+    """
+    if evento['tipo_evento'] == 'lluvia':
+        return -1
+    restante_real = max(evento['hora_inicio'] + evento['duracion'] - hora - 1, 0)
+    epsilon = rng_aviso.normal(0, args.ruido_aviso) if args.ruido_aviso > 0 else 0.0
+    return max(int(round(restante_real * np.exp(epsilon))), 0)
 datos_ml = []
 total_eventos_generados = 0
 
@@ -299,6 +321,8 @@ for _, fila_manifiesto in df_manifiesto.iterrows():
                         # duración NO se expone al modelo (no se conoce hasta que termina).
                         'edad': hora - evento['hora_inicio'],
                     }
+                    if args.ruido_aviso is not None:
+                        info_tramos_hora[k]['aviso'] = horas_restantes_anunciadas(evento, hora)
         info_eventos_por_hora[hora] = info_tramos_hora
 
         # 3. CÁLCULO DE CONGESTIÓN (BPR): la carga fantasma de un evento se suma solo
@@ -368,6 +392,8 @@ for _, fila_manifiesto in df_manifiesto.iterrows():
                 'tipo_evento': tipo_evento,
                 'severidad_evento': severidad_evento,
                 'edad_evento': edad_evento,
+                **({'horas_restantes_anunciadas': info_evento['aviso'] if info_evento else -1}
+                   if args.ruido_aviso is not None else {}),
                 'target_congestibilidad_t_plus_1': congest_futura,
             })
 

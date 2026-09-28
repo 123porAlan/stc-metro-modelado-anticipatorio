@@ -2,7 +2,7 @@
 
 **Alumno:** Alan Bellon García
 **Asesor:** M. en Fil. C. Enrique Francisco Soto Astorga
-**Fecha de este reporte:** 2026-09-27 (actualizado — ver [Sección 4](#4-extensión-multi-día--eventos-estocásticos-2026-09-27) , [Sección 5](#5-ubicación-en-la-red-comparación-de-modelos-y-evaluación-sistemática-del-ruteo-2026-09-27) , [Sección 6](#6-capacidad-por-línea-suspensión-de-tramos-tasas-calibradas-y-experimento-multi-semilla-2026-09-27) y [Sección 7](#7-selección-fija-de-modelo-30-semillas-y-edad-del-evento-2026-09-27))
+**Fecha de este reporte:** 2026-09-27 (actualizado — ver [Sección 4](#4-extensión-multi-día--eventos-estocásticos-2026-09-27) , [Sección 5](#5-ubicación-en-la-red-comparación-de-modelos-y-evaluación-sistemática-del-ruteo-2026-09-27) , [Sección 6](#6-capacidad-por-línea-suspensión-de-tramos-tasas-calibradas-y-experimento-multi-semilla-2026-09-27) , [Sección 7](#7-selección-fija-de-modelo-30-semillas-y-edad-del-evento-2026-09-27) y [Sección 8](#8-aviso-de-restablecimiento-y-histgb-en-el-ruteo-2026-09-27))
 
 Este documento resume el estado técnico y metodológico del prototipo descrito en el
 anexo de titulación (*"Modelado y prototipado de un sistema de Inteligencia Artificial
@@ -18,9 +18,9 @@ de México"*), con base en el código y los datos actualmente presentes en
 |---|---|---|
 | Generar dataset sintético de afluencia/disrupciones | ✅ Completo (14 días sintéticos, laboral+fin de semana, eventos estocásticos con tasas calibradas, capacidad por línea) | `generador_sintetico_horario.py`, `simulador_congestion.py`, `datos_procesados/*.csv` |
 | Representar la red como grafo con pesos | ✅ Completo | `grafo_metro.py` → `grafo_base_metro.gexf` |
-| Modelo de estimación a horizonte corto (10–60 min) | ⚠️ Parcial (horizonte discreto de 1 hora, no continuo 10-60 min); comparación de 6 configuraciones; modelo fijo RandomForest + línea/tramo porque la selección por semilla es inestable (Secciones 6.4 y 7.1) | `entrenador_anticipatorio.py` → `modelos/modelo_anticipatorio.pkl` |
+| Modelo de estimación a horizonte corto (10–60 min) | ⚠️ Parcial (horizonte discreto de 1 hora, no continuo 10-60 min); comparación de 6 configuraciones; modelo fijo RandomForest + línea/tramo porque la selección por semilla es inestable (Secciones 6.4 y 7.1); HistGB rutea peor (Sección 8.2) | `entrenador_anticipatorio.py` → `modelos/modelo_anticipatorio.pkl` |
 | Algoritmo de ruteo que integre la métrica predictiva | ✅ Prueba de concepto funcional | `ruteo_anticipatorio.py` |
-| Integración estimación + ruteo en prototipo funcional | ⚠️ Evaluado con 30 semillas (258 horas con evento, 525,446 casos O-D): la IA pierde 5.3× menos que el reactivo (IC excluye 0) y captura 47.7% [23.2; 67.6] del ahorro posible, pero su ventaja en ahorro total no es significativa (Sección 7.3) | `ruteo_anticipatorio.py` |
+| Integración estimación + ruteo en prototipo funcional | ⚠️ Evaluado con 30 semillas (258 horas con evento, 525,446 casos O-D): la IA pierde 5.3× menos que el reactivo (IC excluye 0) y captura 47.7% [23.2; 67.6] del ahorro posible, pero su ventaja en ahorro total no es significativa (Sección 7.3). Con aviso de restablecimiento (σ = 0.5) captura 74.2% [59.3; 82.0] y ahorra más que el reactivo con P = 96% (Sección 8) | `ruteo_anticipatorio.py` |
 | Explicabilidad de las recomendaciones | ✅ Iniciado (importancia por permutación, agnóstica al modelo) | `entrenador_anticipatorio.py` → `importancia_variables.png` |
 | Sistema reactivo de comparación (índice 5.5) | ✅ Implementado y comparado: estático vs. reactivo vs. anticipatorio vs. oráculo | `ruteo_anticipatorio.py` |
 
@@ -212,7 +212,9 @@ largos conocidos (p. ej. Ciudad Azteca, La Raza, Tacubaya).
    semillas la selección se fijó (RF + línea/tramo) y las pérdidas del ruteo ya tienen IC,
    pero la ventaja en ahorro total sigue sin ser significativa (60%): no es un problema de
    tamaño de muestra sino de que la IA predice el valor esperado de incidentes que duran
-   poco (Sección 7.4).
+   poco (Sección 7.4). **Actualización (Sección 8):** con el aviso de tiempo estimado de
+   restablecimiento como feature, la IA captura 74% del ahorro posible y supera al
+   reactivo en ahorro total con P = 96% (IC de dos colas aún incluye 0).
 7. ~~**Lluvia independiente por línea y sobreestimada**~~ **RESUELTO PARCIALMENTE
    2026-09-27** (Sección 6.3): un episodio por día lluvioso, con probabilidad mensual
    del SMN y correlacionado entre líneas. La hora de inicio (uniforme) y la probabilidad
@@ -894,7 +896,7 @@ Lectura:
 3. Se conserva `edad_evento` en el modelo: no empeora y sería relevante con duraciones más
    largas o datos reales de incidentes.
 
-### 7.5 Siguiente paso
+### 7.5 Siguiente paso (ejecutado — ver [Sección 8](#8-aviso-de-restablecimiento-y-histgb-en-el-ruteo-2026-09-27))
 
 **Plan.** La Sección 7 dejó dos preguntas abiertas: (a) si la IA pierde ahorro frente al
 reactivo por falta de información sobre la duración de los incidentes (Sección 7.4), y
@@ -965,6 +967,138 @@ limitaciones #4 y #5 de la Sección 3 quedan para la fase siguiente (punto 5).
    entre variantes, por eso van después.
 
 Tiempo total estimado: ~1 h 40 min de cómputo (3 corridas en paralelo) más el análisis.
+
+## 8. Aviso de restablecimiento y HistGB en el ruteo (2026-09-27)
+
+Ejecución del plan de la Sección 7.5. Cambios de código:
+
+- `simulador_congestion.py`: argumento `--ruido-aviso σ`. Si se pasa, agrega la columna
+  `horas_restantes_anunciadas`: restante real = `hora_inicio + duracion − hora − 1`
+  (mínimo 0), aviso = `round(restante × exp(ε))`, `ε ~ N(0, σ)`, mínimo 0; −1 sin evento o
+  si el evento más severo del tramo es lluvia. El ruido sale de un generador aparte
+  (`default_rng(semilla + 1_000_000)`) y se sortea de nuevo cada hora. Sin el argumento
+  el dataset es el de la Sección 7. **Verificado:** con la semilla 42 y `σ = 0.5` las 16
+  columnas previas son idénticas al dataset de la Sección 7 (`DataFrame.equals`).
+- `entrenador_anticipatorio.py`: `horas_restantes_anunciadas` entra en las features solo
+  si está en el dataset; la lista de features se guarda en la codificación del `.pkl`
+  para que el ruteo arme las mismas columnas. Argumento `--configuracion <modelo>[+geo]`
+  que sobrescribe `MODELO_ELEGIDO` (por defecto sigue RandomForest + línea/tramo).
+- `experimento_semillas.py`: `--variante` (`base`, `hgb`, `aviso_perfecto`,
+  `aviso_ruidoso`) con salida en `datos_procesados/semillas/<variante>/semilla_<s>/`;
+  `--reusar-dataset` omite el simulador si el dataset existe (`hgb` usa el de `base`);
+  `--comparar A B` hace el bootstrap pareado B − A (5,000 repeticiones sobre horas con
+  evento completas) y lo guarda en `modelos/comparacion_pareada_<B>_vs_<A>.csv`. Las
+  corridas de la Sección 7 se movieron a `semillas/base/`; al reagregarlas se reproducen
+  exactamente las cifras de la Sección 7.3.
+
+Las cuatro variantes evalúan las mismas 258 horas con evento y 525,446 casos O-D; el
+reactivo y el oráculo son idénticos en todas (verificado hora por hora), así que toda
+diferencia viene del sistema anticipatorio.
+
+### 8.1 Resultados por variante
+
+Bootstrap por conglomerados (horas con evento), IC 95%:
+
+| Variante | Ahorro total IA (min) [IC 95%] | Pérdidas IA (min) [IC 95%] | Cambios de ruta | % del ahorro posible [IC 95%] |
+|---|---|---|---|---|
+| Reactivo (referencia) | 20,154 [−16,622; 57,996] | −29,024 [−50,965; −12,320] | 33,953 | 40.9 [−66.0; 78.8] |
+| `base` (RF + línea/tramo) | 23,494 [6,434; 43,875] | −5,483 [−9,744; −2,433] | 16,233 | 47.7 [23.2; 67.6] |
+| `hgb` (HistGB + línea/tramo) | 21,249 [3,056; 43,406] | −8,143 [−14,007; −3,559] | 16,889 | 43.2 [10.3; 66.9] |
+| `aviso_perfecto` (σ = 0) | **36,461 [12,815; 63,490]** | −3,920 [−6,217; −2,048] | 18,376 | **74.1 [57.6; 81.9]** |
+| `aviso_ruidoso` (σ = 0.5) | **36,548 [13,088; 63,434]** | **−3,334 [−5,175; −1,809]** | 17,251 | **74.2 [59.3; 82.0]** |
+| Oráculo | 49,224 [21,000; 81,549] | 0 | 19,527 | 100 |
+
+**Diferencias pareadas contra `base`** (variante − `base`; pérdidas positivas = pierde menos):
+
+| Variante | Δ ahorro (min) [IC 95%] | P(ahorra más) | Δ pérdidas (min) [IC 95%] | P(pierde menos) | Horas mejor / peor / igual |
+|---|---|---|---|---|---|
+| `hgb` | −2,246 [−12,811; 8,604] | 34% | −2,660 [−5,986; 176] | 3.5% | 48 / 55 / 155 |
+| `aviso_perfecto` | **+12,967 [2,198; 27,249]** | **100%** | +1,563 [−74; 4,090] | 95.9% | 31 / 11 / 216 |
+| `aviso_ruidoso` | **+13,053 [2,389; 27,233]** | **100%** | **+2,149 [50; 5,613]** | **98.6%** | 27 / 10 / 221 |
+
+**Diferencias contra el reactivo** (anticipatorio de la variante − reactivo):
+
+| Variante | Δ ahorro (min) [IC 95%] | P(IA ahorra más) | Δ pérdidas (min) [IC 95%] | P(IA pierde menos) | Semillas con IA > reactivo |
+|---|---|---|---|---|---|
+| `base` | +3,340 [−21,618; 28,904] | 60% | +23,542 [7,993; 44,024] | 100% | 18 / 30 |
+| `hgb` | +1,095 [−24,913; 27,713] | 54% | +20,882 [5,563; 41,431] | 100% | 18 / 30 |
+| `aviso_perfecto` | +16,307 [−1,225; 38,173] | **96.3%** | +25,105 [9,319; 45,876] | 100% | 20 / 30 |
+| `aviso_ruidoso` | +16,394 [−1,592; 38,426] | **96.1%** | +25,691 [9,722; 46,733] | 100% | 20 / 30 |
+
+Comparación pareada `aviso_ruidoso` − `aviso_perfecto`: Δ ahorro +87 min [−862; 1,328]
+(P = 52%), Δ pérdidas +586 min [−72; 1,669] (P de que el ruidoso pierda menos = 93%);
+13 horas mejor, 17 peor, 228 iguales. **No hay diferencia.**
+
+Desglose por tipo de hora (mismo corte que la Sección 7.3):
+
+| Variante | 53 horas con ahorro posible: IA / reactivo (min) | Horas IA gana / reactivo gana | 205 horas sin ahorro posible: IA / reactivo (min) |
+|---|---|---|---|
+| `base` | 28,010 / 37,044 | 9 / 38 | −4,516 / −16,889 |
+| `hgb` | 27,468 / 37,044 | 7 / 40 | −6,219 / −16,889 |
+| `aviso_perfecto` | **39,230** / 37,044 | 9 / 36 | −2,769 / −16,889 |
+| `aviso_ruidoso` | **38,853** / 37,044 | 9 / 36 | −2,305 / −16,889 |
+
+Modelo (validación por días agregada, RF + línea/tramo): el RMSE con evento baja de 1.179
+(`base`) a 1.027 (`aviso_perfecto`) y 1.032 (`aviso_ruidoso`), −13%. En la semilla 42,
+`horas_restantes_anunciadas` es la segunda variable por importancia de permutación
+(0.028, solo detrás de `congestibilidad_t` con 0.064).
+
+Precisión del aviso ruidoso (1,569 filas de incidente o falla, 30 semillas): 81.1% se
+anuncian exactos. Las 820 filas con restante 0 (52%) siempre se anuncian bien por ser
+ruido multiplicativo; con restante 1, el 72% se anuncia exacto y 8% se anuncia 0.
+
+### 8.2 Lectura (criterios de la Sección 7.5)
+
+1. **`aviso_perfecto` sí mejora a `base`: la hipótesis de la Sección 7.4 se confirma.** La
+   IA ahorra +12,967 min más (IC pareado [2,198; 27,249], P = 100%) y sube del 47.7% al
+   74.1% del ahorro posible, con un IC que ya no toca valores bajos ([57.6; 81.9]). La
+   mejora viene de los dos lados: en las 53 horas con ahorro posible pasa de 28,010 a
+   39,230 min (el aviso le dice cuándo el incidente sigue y vale desviarse) y en las 205
+   sin ahorro posible sus pérdidas bajan de −4,516 a −2,769 (el aviso "restante 0" le
+   dice que el incidente termina y no conviene desviarse). La IA perdía ahorro por
+   predecir el valor esperado sin saber la duración, no por el costo del desvío ni por
+   el umbral de decisión.
+2. **El valor del aviso no depende de su precisión, al menos con σ = 0.5.** `aviso_ruidoso`
+   rinde igual que el perfecto (Δ ahorro +87 min, P = 52%) y hasta pierde un poco menos
+   (−3,334 vs. −3,920; P = 93%, no significativo). La explicación está en la estructura
+   del aviso: la información que decide la ruta es sobre todo si el incidente **termina
+   en esta hora o no** (restante 0 vs. ≥ 1), y esa distinción sobrevive al ruido: el 0
+   se anuncia siempre bien y un restante 1 solo se confunde con 0 en 8% de los casos.
+   Con incidentes de 1–4 horas, errar entre "quedan 2" y "quedan 3" no cambia la
+   decisión de t+1. **Limitación:** esta robustez es en parte una propiedad del supuesto
+   (ruido multiplicativo, que nunca se equivoca en el 0). Un aviso real puede anunciar
+   "15 minutos" para un cierre que dura una hora; ese error aditivo no se probó.
+3. **`hgb` no gana a `base` en ahorro pareado ni en pérdidas: se cierra la Sección 7.1
+   manteniendo RandomForest + línea/tramo.** HistGB ahorra −2,246 min menos (P de que
+   ahorre más = 34%) y pierde −2,660 min más (P de que pierda menos = 3.5%, es decir, 96.5%
+   de que pierda más). Su mejor RMSE con evento (1.085 vs. 1.179) no se traduce en mejores
+   rutas: el error extra en filas sin evento (RMSE global 30% peor) mete retrasos
+   espurios que desvían sin necesidad (16,889 cambios de ruta vs. 16,233).
+4. **Con `aviso_ruidoso` la IA supera al reactivo en ahorro total con P = 96.1% (≥ 95%).**
+   Por el criterio fijado en la Sección 7.5 se actualiza la afirmación de la tesis de
+   "anticipar reduce el riesgo" a **"anticipar ahorra más, si el sistema recibe el aviso
+   de restablecimiento"**, con tres matices que deben acompañarla:
+   - El margen es estrecho: el IC 95% de dos colas de la diferencia ([−1,592; 38,426])
+     todavía incluye el 0; P = 96% equivale a una prueba de una cola al 5%. Es la
+     formulación del criterio, pero no se debe presentar como diferencia "clara".
+   - En horas con ahorro posible el reactivo sigue ganando en más horas (36 vs. 9); la IA
+     gana en total porque sus aciertos valen más y porque casi no pierde en las 205 horas
+     sin ahorro posible (−2,305 vs. −16,889).
+   - La afirmación depende de que exista el aviso con precisión similar a la simulada.
+     Sin aviso (`base`), la conclusión de la Sección 7.3 sigue en pie (P = 60%).
+   La ventaja en pérdidas se mantiene en todas las variantes (P = 100%, IC excluye 0).
+
+### 8.3 Siguiente paso
+
+1. **Probar un aviso con error aditivo** (p. ej. `aviso = max(restante + δ, 0)`,
+   `δ ∈ {−1, 0, +1}`), que sí puede anunciar 0 cuando el incidente sigue, para acotar
+   cuánto de la robustez del punto 2 de la Sección 8.2 viene del supuesto multiplicativo.
+2. Con el aviso incorporado, retomar la fase siguiente de la Sección 7.5 (punto 5):
+   limitación #4 (horizonte sub-horario de 10–60 min) y #5 (perfiles O-D de la matriz de
+   afluencia real). El horizonte sub-horario es además donde el aviso debería rendir más,
+   porque la granularidad de 1 hora reduce el aviso casi a una variable binaria.
+3. Documentar en el capítulo de metodología las fuentes del aviso (avisos del STC en
+   redes sociales o la app oficial) como insumo requerido para un despliegue real.
 
 ---
 
@@ -1054,18 +1188,17 @@ modelo tenga suficientes ejemplos de eventos disruptivos que aprender.
 ## Mensaje de commit
 
 ```
-feat: modelo fijo, 30 semillas y edad del evento
+feat: aviso de restablecimiento, variantes y bootstrap pareado
 
-- entrenador_anticipatorio.py: el modelo exportado es fijo (RandomForest +
-  linea/tramo, MODELO_ELEGIDO); la seleccion por RMSE con evento de cada
-  semilla era ruido (30 semillas: 6 ganadores distintos). Nueva feature
-  edad_evento.
-- simulador_congestion.py: guarda edad_evento (horas desde hora_inicio, -1 sin
-  evento); la duracion no se expone. Mismos sorteos que antes.
-- experimento_semillas.py: 30 semillas; bootstrap con IC de ahorro y perdidas
-  por sistema y probabilidad de que la IA pierda menos. La IA pierde 5.3x
-  menos que el reactivo (IC de la diferencia excluye 0) y captura 47.7%
-  [23.2; 67.6] del ahorro posible; su ventaja en ahorro total sigue sin ser
-  significativa (P = 60%). edad_evento no aporta (ablacion: RMSE identico).
-- avances.md: seccion 7; bloques de prompt reescritos como bitacora.
+- simulador_congestion.py: --ruido-aviso agrega horas_restantes_anunciadas
+  (restante real con ruido log-normal, generador aparte; las demas columnas
+  quedan identicas, verificado con semilla 42).
+- entrenador_anticipatorio.py: el aviso entra como feature solo si existe;
+  --configuracion sobrescribe MODELO_ELEGIDO.
+- experimento_semillas.py: --variante, --reusar-dataset y --comparar A B
+  (bootstrap pareado por horas). Con aviso la IA captura 74% del ahorro
+  posible (antes 47.7%), ahorra +13,000 min mas que base (P = 100%) y supera
+  al reactivo con P = 96%; sigma = 0.5 rinde igual que el aviso perfecto.
+  HistGB rutea peor que RF (P pierde menos = 3.5%): se mantiene RF.
+- avances.md: seccion 8.
 ```

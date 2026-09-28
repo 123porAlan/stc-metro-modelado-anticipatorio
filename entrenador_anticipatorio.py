@@ -29,6 +29,12 @@ FEATURES_BASE = [
     # persistencia de los incidentes: qué tan probable es que sigan activos en t+1.
     'edad_evento',
 ]
+# Aviso de restablecimiento del simulador (ver avances.md, Sección 7.5). Solo existe si el
+# dataset se generó con --ruido-aviso; los datasets anteriores se siguen entrenando sin él.
+FEATURE_AVISO = 'horas_restantes_anunciadas'
+
+def features_base_de(df):
+    return FEATURES_BASE + [FEATURE_AVISO] if FEATURE_AVISO in df.columns else list(FEATURES_BASE)
 
 # Suavizado del target encoding de 'tramo': un tramo con pocas observaciones se acerca a
 # la media global en vez de confiar ciegamente en su propio promedio.
@@ -44,6 +50,13 @@ DIAS_VALIDACION = 5
 # ruido. Se fija la configuración que ganó en el agregado multi-semilla (RMSE global y
 # con evento). La comparación de candidatos se sigue reportando para auditar la elección.
 MODELO_ELEGIDO = ('RandomForest', True)
+
+def parsear_configuracion(texto):
+    """'HistGradientBoosting+geo' -> ('HistGradientBoosting', True); 'RandomForest' -> ('RandomForest', False)."""
+    nombre, _, sufijo = texto.partition('+')
+    if nombre not in CANDIDATOS or sufijo not in ('', 'geo'):
+        raise ValueError(f"Configuración inválida '{texto}': use <modelo>[+geo] con modelo en {list(CANDIDATOS)}")
+    return nombre, sufijo == 'geo'
 
 CANDIDATOS = {
     'RandomForest': lambda: RandomForestRegressor(
@@ -92,6 +105,8 @@ def ajustar_codificacion(df_train):
         'lineas': sorted(asignar_linea(df_train).unique()),
         'tramo_media': media_suavizada.to_dict(),
         'media_global': media_global,
+        # Se guarda con el modelo para que el ruteo arme exactamente las mismas columnas.
+        'features_base': features_base_de(df_train),
     }
 
 def construir_features(df, codificacion, usar_geo=True):
@@ -100,7 +115,7 @@ def construir_features(df, codificacion, usar_geo=True):
     sklearn no aceptan texto. Con usar_geo=True se agrega la ubicación en la red: dummies
     de línea + congestión media histórica del tramo (target encoding).
     """
-    X = df[FEATURES_BASE].copy()
+    X = df[codificacion.get('features_base', FEATURES_BASE)].copy()
     for tipo in codificacion['tipos_evento']:
         X[f'evento_{tipo}'] = (df['tipo_evento'] == tipo).astype(int)
     if usar_geo:
@@ -187,7 +202,7 @@ def imprimir_tabla(resultados, titulo):
     print(df_res[['configuracion', 'MAE', 'RMSE', 'MAE_evento', 'RMSE_evento', 'n_evento']]
           .sort_values('RMSE_evento').to_string(index=False, float_format=lambda x: f"{x:.4f}"))
 
-def comparar_modelos(df, archivo_comparacion=ARCHIVO_COMPARACION):
+def comparar_modelos(df, archivo_comparacion=ARCHIVO_COMPARACION, modelo_elegido=MODELO_ELEGIDO):
     """Compara RandomForest vs. GradientBoosting vs. HistGradientBoosting, con y sin línea/tramo."""
     print("\n2. Comparando modelos candidatos...")
     df_train, df_test = separar_train_test(df)
@@ -209,7 +224,7 @@ def comparar_modelos(df, archivo_comparacion=ARCHIVO_COMPARACION):
     for criterio in ('RMSE_evento', 'RMSE'):
         mejor = min(resultados_validacion, key=lambda r: r[criterio])
         print(f"   Menor {criterio} en esta semilla: {nombre_configuracion(mejor['modelo'], mejor['usar_geo'])}")
-    nombre_modelo, usar_geo = MODELO_ELEGIDO
+    nombre_modelo, usar_geo = modelo_elegido
     print(f"   [OK] Seleccionado (fijo): {nombre_configuracion(nombre_modelo, usar_geo)}")
     return nombre_modelo, usar_geo, df_train, df_test
 
@@ -291,14 +306,17 @@ if __name__ == "__main__":
     parser.add_argument("--modelo", default=RUTA_MODELO)
     parser.add_argument("--comparacion", default=ARCHIVO_COMPARACION)
     parser.add_argument("--grafica", default=ARCHIVO_GRAFICA)
+    parser.add_argument("--configuracion", default=None,
+                        help="Sobrescribe MODELO_ELEGIDO, p. ej. 'HistGradientBoosting+geo'")
     args = parser.parse_args()
+    modelo_elegido = parsear_configuracion(args.configuracion) if args.configuracion else MODELO_ELEGIDO
 
     try:
         # 1. Cargar datos
         df_features = cargar_y_preparar_datos(args.dataset)
 
         # 2. Comparar candidatos y elegir
-        nombre_modelo, usar_geo, df_train, df_test = comparar_modelos(df_features, args.comparacion)
+        nombre_modelo, usar_geo, df_train, df_test = comparar_modelos(df_features, args.comparacion, modelo_elegido)
 
         # 3 y 4. Entrenar y Evaluar el modelo elegido
         modelo, codificacion, X_test, metricas = entrenar_modelo_final(df_train, df_test, nombre_modelo, usar_geo)
