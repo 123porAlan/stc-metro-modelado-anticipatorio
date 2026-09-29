@@ -17,21 +17,30 @@ RUTA_MODELO = "modelos/modelo_anticipatorio.pkl"
 ARCHIVO_COMPARACION = "modelos/comparacion_modelos.csv"
 ARCHIVO_GRAFICA = "importancia_variables.png"
 
-TARGET = 'target_congestibilidad_t_plus_1'
+# El simulador trabaja en bloques de 15 min (limitación #4): t+k es k bloques adelante.
+# Se entrena un modelo por horizonte; TARGET (15 min) es el horizonte principal, el que
+# se usa para comparar candidatos y para la gráfica de explicabilidad.
+MINUTOS_BLOQUE = 15
+HORIZONTES = {MINUTOS_BLOQUE * k: f'target_congestibilidad_t_plus_{k}' for k in range(1, 5)}
+TARGET = HORIZONTES[MINUTOS_BLOQUE]
 FEATURES_BASE = [
     'hora',
+    'minuto',
     'tiempo_ideal',
     'congestibilidad_t',
     'congestibilidad_t_minus_1',
+    'congestibilidad_t_minus_2',
+    'congestibilidad_t_minus_3',
+    'congestibilidad_t_minus_4',
     'hay_evento',
     'severidad_evento',
-    # Horas desde que empezó el evento del tramo (-1 sin evento). Permite aprender la
-    # persistencia de los incidentes: qué tan probable es que sigan activos en t+1.
+    # Bloques desde que empezó el evento del tramo (-1 sin evento). Permite aprender la
+    # persistencia de los incidentes: qué tan probable es que sigan activos en t+k.
     'edad_evento',
 ]
-# Aviso de restablecimiento del simulador (ver avances.md, Sección 7.5). Solo existe si el
-# dataset se generó con --ruido-aviso; los datasets anteriores se siguen entrenando sin él.
-FEATURE_AVISO = 'horas_restantes_anunciadas'
+# Aviso de restablecimiento del simulador (ver avances.md, Sección 7.5), en bloques. Solo
+# existe si el dataset se generó con algún argumento de aviso.
+FEATURE_AVISO = 'bloques_restantes_anunciados'
 
 def features_base_de(df):
     return FEATURES_BASE + [FEATURE_AVISO] if FEATURE_AVISO in df.columns else list(FEATURES_BASE)
@@ -75,7 +84,7 @@ def cargar_y_preparar_datos(ruta_archivo):
     # ORDEN CRONOLÓGICO: Vital para series temporales.
     # Aseguramos que el modelo aprenda del pasado para predecir el futuro.
     df['fecha'] = pd.to_datetime(df['fecha'])
-    df = df.sort_values(by=['fecha', 'hora']).reset_index(drop=True)
+    df = df.sort_values(by=['fecha', 'bloque']).reset_index(drop=True)
 
     return df
 
@@ -90,15 +99,15 @@ def asignar_linea(df):
     linea_destino = df['nodo_destino'].map(linea_de_nodo)
     return pd.Series(np.where(linea_origen == linea_destino, linea_origen, 'transbordo'), index=df.index)
 
-def ajustar_codificacion(df_train):
+def ajustar_codificacion(df_train, target=TARGET):
     """
     Aprende, SOLO con datos de entrenamiento, cómo convertir las variables categóricas a
     numéricas: categorías de tipo_evento y línea (para dummies con columnas fijas) y el
-    target encoding de 'tramo' (congestión futura media por tramo, suavizada). Calcularlo
-    con el set de prueba filtraría el futuro al modelo.
+    target encoding de 'tramo' (congestión futura media por tramo, suavizada, del horizonte
+    que se entrena). Calcularlo con el set de prueba filtraría el futuro al modelo.
     """
-    media_global = df_train[TARGET].mean()
-    stats = df_train.groupby('tramo')[TARGET].agg(['mean', 'count'])
+    media_global = df_train[target].mean()
+    stats = df_train.groupby('tramo')[target].agg(['mean', 'count'])
     media_suavizada = (stats['mean'] * stats['count'] + media_global * SUAVIZADO_TRAMO) / (stats['count'] + SUAVIZADO_TRAMO)
     return {
         'tipos_evento': sorted(df_train['tipo_evento'].unique()),
@@ -141,11 +150,11 @@ def calcular_metricas(y, y_pred, hay_evento):
         'n_evento': int(evento.sum()),
     }
 
-def entrenar_configuracion(df_train, nombre_modelo, usar_geo):
-    codificacion = ajustar_codificacion(df_train)
+def entrenar_configuracion(df_train, nombre_modelo, usar_geo, target=TARGET):
+    codificacion = ajustar_codificacion(df_train, target)
     X_train = construir_features(df_train, codificacion, usar_geo)
     modelo = CANDIDATOS[nombre_modelo]()
-    modelo.fit(X_train, df_train[TARGET])
+    modelo.fit(X_train, df_train[target])
     return modelo, codificacion
 
 def configuraciones():
@@ -203,8 +212,9 @@ def imprimir_tabla(resultados, titulo):
           .sort_values('RMSE_evento').to_string(index=False, float_format=lambda x: f"{x:.4f}"))
 
 def comparar_modelos(df, archivo_comparacion=ARCHIVO_COMPARACION, modelo_elegido=MODELO_ELEGIDO):
-    """Compara RandomForest vs. GradientBoosting vs. HistGradientBoosting, con y sin línea/tramo."""
-    print("\n2. Comparando modelos candidatos...")
+    """Compara RandomForest vs. GradientBoosting vs. HistGradientBoosting, con y sin línea/tramo,
+    en el horizonte principal (TARGET, 15 min)."""
+    print(f"\n2. Comparando modelos candidatos (horizonte {MINUTOS_BLOQUE} min)...")
     df_train, df_test = separar_train_test(df)
     print(f"   - Datos de Entrenamiento (Pasado): {len(df_train)} registros")
     print(f"   - Datos de Prueba (Futuro): {len(df_test)} registros ({df_test['hay_evento'].sum()} con evento activo)")
@@ -229,24 +239,25 @@ def comparar_modelos(df, archivo_comparacion=ARCHIVO_COMPARACION, modelo_elegido
     return nombre_modelo, usar_geo, df_train, df_test
 
 def entrenar_modelo_final(df_train, df_test, nombre_modelo, usar_geo):
-    """Entrena el modelo elegido con el 80% inicial y lo evalúa en el 20% final. No se
-    reentrena con todo el dataset para que el ruteo pueda evaluarse sobre días no vistos."""
-    print("\n3. Entrenando el Modelo de Inteligencia Anticipatoria...")
-    modelo, codificacion = entrenar_configuracion(df_train, nombre_modelo, usar_geo)
-    print("   [OK] Entrenamiento completado.")
+    """Entrena el modelo elegido, uno por horizonte, con el 80% inicial y lo evalúa en el
+    20% final. No se reentrena con todo el dataset para que el ruteo pueda evaluarse sobre
+    días no vistos."""
+    print("\n3. Entrenando el Modelo de Inteligencia Anticipatoria (un modelo por horizonte)...")
+    resultados = {}
+    for minutos, target in HORIZONTES.items():
+        modelo, codificacion = entrenar_configuracion(df_train, nombre_modelo, usar_geo, target)
+        X_test = construir_features(df_test, codificacion, usar_geo)
+        metricas = calcular_metricas(df_test[target], predecir(modelo, X_test), df_test['hay_evento'])
+        resultados[minutos] = {'modelo': modelo, 'codificacion': codificacion, 'X_test': X_test, 'metricas_test': metricas}
+        print(f"   [OK] Horizonte {minutos} min entrenado.")
 
     print("\n4. Evaluando KPIs Predictivos...")
-    X_test = construir_features(df_test, codificacion, usar_geo)
-    metricas = calcular_metricas(df_test[TARGET], predecir(modelo, X_test), df_test['hay_evento'])
+    print("--- RESULTADOS DEL MODELO (minutos) ---")
+    tabla = pd.DataFrame({f'{m} min': r['metricas_test'] for m, r in resultados.items()}).T
+    print(tabla[['MAE', 'RMSE', 'MAE_evento', 'RMSE_evento', 'n_evento']].to_string(float_format=lambda x: f"{x:.4f}"))
+    print("---------------------------------------")
 
-    print("--- RESULTADOS DEL MODELO ---")
-    print(f"MAE  (Error Absoluto Medio): {metricas['MAE']:.4f} minutos.")
-    print(f"RMSE (Raíz Error Cuadrático): {metricas['RMSE']:.4f} minutos.")
-    print(f"MAE  en filas con evento ({metricas['n_evento']}): {metricas['MAE_evento']:.4f} minutos.")
-    print(f"RMSE en filas con evento ({metricas['n_evento']}): {metricas['RMSE_evento']:.4f} minutos.")
-    print("-----------------------------")
-
-    return modelo, codificacion, X_test, metricas
+    return resultados
 
 def importancia_por_permutacion(modelo, X, y, repeticiones=5, semilla=42):
     """
@@ -308,6 +319,8 @@ if __name__ == "__main__":
     parser.add_argument("--grafica", default=ARCHIVO_GRAFICA)
     parser.add_argument("--configuracion", default=None,
                         help="Sobrescribe MODELO_ELEGIDO, p. ej. 'HistGradientBoosting+geo'")
+    parser.add_argument("--sin-comparacion", action="store_true",
+                        help="Omite la comparación de candidatos (36 ajustes) y entrena directo la configuración elegida")
     args = parser.parse_args()
     modelo_elegido = parsear_configuracion(args.configuracion) if args.configuracion else MODELO_ELEGIDO
 
@@ -316,25 +329,33 @@ if __name__ == "__main__":
         df_features = cargar_y_preparar_datos(args.dataset)
 
         # 2. Comparar candidatos y elegir
-        nombre_modelo, usar_geo, df_train, df_test = comparar_modelos(df_features, args.comparacion, modelo_elegido)
+        if args.sin_comparacion:
+            nombre_modelo, usar_geo = modelo_elegido
+            df_train, df_test = separar_train_test(df_features)
+            print(f"\n2. Comparación omitida. Configuración: {nombre_configuracion(nombre_modelo, usar_geo)}")
+        else:
+            nombre_modelo, usar_geo, df_train, df_test = comparar_modelos(df_features, args.comparacion, modelo_elegido)
 
-        # 3 y 4. Entrenar y Evaluar el modelo elegido
-        modelo, codificacion, X_test, metricas = entrenar_modelo_final(df_train, df_test, nombre_modelo, usar_geo)
+        # 3 y 4. Entrenar y Evaluar el modelo elegido en cada horizonte
+        resultados = entrenar_modelo_final(df_train, df_test, nombre_modelo, usar_geo)
 
-        # 5. Generar gráfica de Explicabilidad (Objetivo de la tesis)
-        graficar_explicabilidad(modelo, X_test, df_test[TARGET], nombre_modelo, args.grafica)
+        # 5. Generar gráfica de Explicabilidad (Objetivo de la tesis), horizonte principal
+        principal = resultados[MINUTOS_BLOQUE]
+        graficar_explicabilidad(principal['modelo'], principal['X_test'], df_test[TARGET], nombre_modelo, args.grafica)
 
-        # 6. Guardar modelo + todo lo necesario para reconstruir sus features
+        # 6. Guardar modelos + todo lo necesario para reconstruir sus features
         primera_fila_test = df_test.iloc[0]
         guardar_modelo({
             'nombre_modelo': nombre_modelo,
             'usar_geo': usar_geo,
-            'modelo': modelo,
-            'codificacion': codificacion,
-            'metricas_test': metricas,
-            # El corte 80/20 puede caer a mitad de una hora: el ruteo solo evalúa horas
-            # posteriores a esta, que el modelo nunca vio.
-            'inicio_test': (primera_fila_test['fecha'], primera_fila_test['hora']),
+            'minutos_bloque': MINUTOS_BLOQUE,
+            'modelos_por_horizonte': {
+                minutos: {k: r[k] for k in ('modelo', 'codificacion', 'metricas_test')}
+                for minutos, r in resultados.items()
+            },
+            # El corte 80/20 puede caer a mitad de un bloque: el ruteo solo evalúa bloques
+            # posteriores a este, que el modelo nunca vio.
+            'inicio_test': (primera_fila_test['fecha'], primera_fila_test['bloque']),
         }, args.modelo)
 
         print("\n🚀 ¡Fase de Inteligencia Anticipatoria completada con éxito!")

@@ -2,7 +2,7 @@
 
 **Alumno:** Alan Bellon García
 **Asesor:** M. en Fil. C. Enrique Francisco Soto Astorga
-**Fecha de este reporte:** 2026-09-27 (actualizado — ver [Sección 4](#4-extensión-multi-día--eventos-estocásticos-2026-09-27) , [Sección 5](#5-ubicación-en-la-red-comparación-de-modelos-y-evaluación-sistemática-del-ruteo-2026-09-27) , [Sección 6](#6-capacidad-por-línea-suspensión-de-tramos-tasas-calibradas-y-experimento-multi-semilla-2026-09-27) , [Sección 7](#7-selección-fija-de-modelo-30-semillas-y-edad-del-evento-2026-09-27) , [Sección 8](#8-aviso-de-restablecimiento-y-histgb-en-el-ruteo-2026-09-27) , [Sección 9](#9-aviso-con-error-aditivo-2026-09-27) , [Sección 10](#10-ruteo-por-edad-del-evento-hora-0--1-y--2-2026-09-27) , [Sección 11](#11-sensibilidad-del-aviso-reactivo-con-regla-de-duración-y-hora--1-por-tipo-2026-09-27) y [Sección 12](#12-sistema-híbrido-y-sensibilidad-del-umbral-de-la-regla-2026-09-27))
+**Fecha de este reporte:** 2026-09-29 (actualizado — ver [Sección 4](#4-extensión-multi-día--eventos-estocásticos-2026-09-27) , [Sección 5](#5-ubicación-en-la-red-comparación-de-modelos-y-evaluación-sistemática-del-ruteo-2026-09-27) , [Sección 6](#6-capacidad-por-línea-suspensión-de-tramos-tasas-calibradas-y-experimento-multi-semilla-2026-09-27) , [Sección 7](#7-selección-fija-de-modelo-30-semillas-y-edad-del-evento-2026-09-27) , [Sección 8](#8-aviso-de-restablecimiento-y-histgb-en-el-ruteo-2026-09-27) , [Sección 9](#9-aviso-con-error-aditivo-2026-09-27) , [Sección 10](#10-ruteo-por-edad-del-evento-hora-0--1-y--2-2026-09-27) , [Sección 11](#11-sensibilidad-del-aviso-reactivo-con-regla-de-duración-y-hora--1-por-tipo-2026-09-27) , [Sección 12](#12-sistema-híbrido-y-sensibilidad-del-umbral-de-la-regla-2026-09-27) y [Sección 13](#13-horizonte-sub-horario-bloques-de-15-minutos-2026-09-29))
 
 Este documento resume el estado técnico y metodológico del prototipo descrito en el
 anexo de titulación (*"Modelado y prototipado de un sistema de Inteligencia Artificial
@@ -18,7 +18,7 @@ de México"*), con base en el código y los datos actualmente presentes en
 |---|---|---|
 | Generar dataset sintético de afluencia/disrupciones | ✅ Completo (14 días sintéticos, laboral+fin de semana, eventos estocásticos con tasas calibradas, capacidad por línea) | `generador_sintetico_horario.py`, `simulador_congestion.py`, `datos_procesados/*.csv` |
 | Representar la red como grafo con pesos | ✅ Completo | `grafo_metro.py` → `grafo_base_metro.gexf` |
-| Modelo de estimación a horizonte corto (10–60 min) | ⚠️ Parcial (horizonte discreto de 1 hora, no continuo 10-60 min); comparación de 6 configuraciones; modelo fijo RandomForest + línea/tramo porque la selección por semilla es inestable (Secciones 6.4 y 7.1); HistGB rutea peor (Sección 8.2) | `entrenador_anticipatorio.py` → `modelos/modelo_anticipatorio.pkl` |
+| Modelo de estimación a horizonte corto (10–60 min) | ✅ Bloques de 15 min con un modelo por horizonte (15, 30, 45 y 60 min) (Sección 13); comparación de 6 configuraciones; modelo fijo RandomForest + línea/tramo porque la selección por semilla es inestable (Secciones 6.4 y 7.1); HistGB rutea peor (Sección 8.2) | `entrenador_anticipatorio.py` → `modelos/modelo_anticipatorio.pkl` |
 | Algoritmo de ruteo que integre la métrica predictiva | ✅ Prueba de concepto funcional | `ruteo_anticipatorio.py` |
 | Integración estimación + ruteo en prototipo funcional | ⚠️ Evaluado con 30 semillas (258 horas con evento, 525,446 casos O-D): la IA pierde 5.3× menos que el reactivo (IC excluye 0) y captura 47.7% [23.2; 67.6] del ahorro posible, pero su ventaja en ahorro total no es significativa (Sección 7.3). Con aviso de restablecimiento (σ = 0.5) captura 74.2% [59.3; 82.0] y ahorra más que el reactivo con P = 96% (Sección 8), pero con un error de ±1 h en el aviso vuelve a 50.0% y P = 64% (Sección 9). Por edad del evento, la ventaja de la IA está en la hora + 2 (P = 99.9%), no en la hora 0 (P = 34%) (Sección 10) | `ruteo_anticipatorio.py` |
 | Explicabilidad de las recomendaciones | ✅ Iniciado (importancia por permutación, agnóstica al modelo) | `entrenador_anticipatorio.py` → `importancia_variables.png` |
@@ -198,8 +198,10 @@ largos conocidos (p. ej. Ciudad Azteca, La Raza, Tacubaya).
    capacidad por sentido y por línea derivada de datos del STC. Queda como supuesto la
    frecuencia por línea (derivada, no publicada; subestima el intervalo de la Línea A)
    y la capacidad de los transbordos (35,000).
-4. **Horizonte de predicción discretizado a 1 hora**, mientras el objetivo de la tesis
-   pide horizonte de 10–60 min. Falta granularidad sub-horaria.
+4. ~~**Horizonte de predicción discretizado a 1 hora**~~ **RESUELTO 2026-09-29** (ver
+   [Sección 13](#13-horizonte-sub-horario-bloques-de-15-minutos-2026-09-29)): el simulador trabaja en bloques de 15 min y el
+   modelo predice a 15, 30, 45 y 60 min. La demanda O-D sigue siendo horaria y se
+   interpola dentro de cada hora (supuesto documentado en la Sección 13.2).
 5. **Perfiles origen/destino hardcodeados** (listas fijas de 10 estaciones): no se
    derivan de un análisis estadístico de la matriz de afluencia real, sino de un
    supuesto manual razonado.
@@ -223,6 +225,12 @@ largos conocidos (p. ej. Ciudad Azteca, La Raza, Tacubaya).
    del SMN y correlacionado entre líneas. La hora de inicio (uniforme) y la probabilidad
    de alcanzar cada línea (0.75) siguen siendo supuestos, pendientes de datos del
    OH-IIUNAM.
+8. **[2026-09-29] El retraso por suspensión revela la duración restante** (Sección 13.6):
+   con bloques de 15 min el retraso de un tramo suspendido es `s²·R/2`, con R los minutos
+   de cierre que faltan. Como la severidad `s` es una feature, el modelo puede despejar R
+   del estado actual. Eso vuelve redundante el aviso de restablecimiento y hace que parte
+   de la ventaja de la IA a 30–60 min se deba a la construcción del simulador. Hay que
+   corregirlo antes de citar esos resultados.
 
 Ninguno de estos puntos invalida el trabajo — son exactamente el tipo de simplificación
 esperable en una primera iteración de prototipo — pero deben documentarse como alcance y
@@ -1690,7 +1698,7 @@ umbral / que la IA):
      **pierde menos y no depende de calibrar a mano una regla** cuya forma correcta cambia
      con la distribución de duraciones de cada red.
 
-### 12.4 Siguiente paso
+### 12.4 Siguiente paso (punto 3, limitación #4, ejecutado — ver [Sección 13](#13-horizonte-sub-horario-bloques-de-15-minutos-2026-09-29); puntos 1 y 2 descartados)
 
 1. **Hora + 1 de incidentes de plataforma**: es donde está toda la brecha entre la IA (o el
    híbrido) y la regla (Secciones 11.3 y 12.3). Hay dos opciones:
@@ -1703,6 +1711,224 @@ umbral / que la IA):
    `--solo-ruteo`.
 3. Sin cambios: limitación #4 (horizonte sub-horario) y #5 (perfiles O-D reales), y
    documentar las fuentes del aviso en el capítulo de metodología.
+
+
+## 13. Horizonte sub-horario: bloques de 15 minutos (2026-09-29)
+
+Esta sección resuelve la limitación #4 (punto 3 de la Sección 12.4). Los puntos 1 y 2 de la
+Sección 12.4 (umbral asimétrico o modelo de dos partes para la hora + 1, y robustez del
+umbral de la regla) se descartan: la fase de optimización con el horizonte de 1 hora se
+dio por cerrada y no se harán más ajustes de umbrales ni de modelos.
+
+Todo el pipeline pasa de pasos de 1 hora a bloques de 15 minutos. El modelo predice la
+congestión a 15, 30, 45 y 60 minutos, que cubre el rango de 10–60 min del objetivo de la
+tesis.
+
+### 13.1 Cambios de código
+
+- `simulador_congestion.py`:
+  - 76 bloques de 15 min por día (05:00 a 23:45). Cada fila trae `hora`, `minuto` y
+    `bloque`.
+  - `capacidad_tramo()` devuelve la capacidad del bloque: la horaria entre 4 (los trenes
+    de un bloque son la cuarta parte de los de la hora). Aplica igual a los transbordos.
+  - Nueva `interpolar_demanda_bloques()`: reparte la carga horaria por sentido de tramo
+    en 4 bloques (Sección 13.2).
+  - `tasa_evento()` divide la tasa horaria entre 4. `sortear_severidad_duracion()` sortea
+    la duración en bloques. `retraso_por_suspension()` depende de los bloques restantes.
+  - `horas_restantes_anunciadas()` → `bloques_restantes_anunciados()`: el aviso y sus
+    errores se miden en bloques (±1 = ±15 min). La columna del dataset se renombra igual.
+  - `edad_evento` se mide en bloques.
+  - Snapshots con 4 rezagos (`congestibilidad_t_minus_1..4`) y 4 objetivos
+    (`target_congestibilidad_t_plus_1..4` = 15, 30, 45 y 60 min). Se descartan los
+    primeros y los últimos 4 bloques de cada día.
+- `entrenador_anticipatorio.py`:
+  - `HORIZONTES = {15: t+1, 30: t+2, 45: t+3, 60: t+4}`; un modelo RF + línea/tramo por
+    horizonte, con su propio target encoding del tramo. `TARGET` es el de 15 min.
+  - Features nuevas: `minuto` y `congestibilidad_t_minus_2..4`.
+  - La comparación de candidatos y la gráfica de importancia usan el horizonte de 15 min.
+  - Nuevo `--sin-comparacion`. El `.pkl` guarda `modelos_por_horizonte` e
+    `inicio_test = (fecha, bloque)`.
+- `ruteo_anticipatorio.py`:
+  - Evalúa cada bloque con evento en los 4 horizontes. El reactivo usa la congestión de
+    ahora (su ruta no depende del horizonte); la IA y el híbrido usan la predicción a
+    t + k; el oráculo y la verdad de referencia, la congestión real de t + k.
+  - Umbrales de la regla de duración convertidos a bloques sin reajustarlos: 1, 2 y 3 h =
+    4, 8 y 12 bloques. Los sufijos `_1` y `_3` siguen significando horas.
+  - El perfil sin evento de la regla se calcula por (tramo, tipo de día, bloque).
+  - La evaluación guarda `edad_evento` (bloques) y `hora_evento` (0, + 1, + 2, ...).
+  - Arma un DataFrame por bloque: acumular ~500 mil diccionarios por semilla llegaba a
+    2.1 GB de memoria; ahora el pico es 0.8 GB, con la misma salida byte a byte.
+- `experimento_semillas.py`:
+  - Todos los agregados se reportan por horizonte. El conglomerado del bootstrap es un
+    bloque con evento (semilla, fecha, bloque).
+  - Los `evaluacion_ruteo.csv` pesan ~100 MB por semilla (antes 4 MB): se agregan semilla
+    por semilla en vez de concatenarlos.
+  - Las corridas multi-semilla entrenan con `--sin-comparacion`.
+  - Nueva tabla `modelos/resultados_horizontes.csv` (`--tabla-horizontes`), con las
+    métricas del modelo por horizonte leídas de cada `.pkl`.
+
+### 13.2 Supuestos nuevos
+
+| Elemento | Antes (horario) | Ahora (bloques de 15 min) |
+|---|---|---|
+| Demanda | Matriz O-D por hora | La misma matriz; la carga horaria de cada sentido de tramo se interpola linealmente entre los centros de horas vecinas y se reescala para conservar el total de la hora |
+| Capacidad | Pasajeros/hora por línea | La horaria / 4 |
+| Tasa de falla e incidente | λ por línea-hora | λ / 4 por línea-bloque (mismo número esperado por hora) |
+| Duración | `1 + Poisson(1)` h, tope 4 h | `1 + Poisson(7)` bloques, tope 16 (misma media, ~2 h) |
+| Retraso por suspensión | `30·s²` min por hora | `s²·R/2`, con R = minutos de cierre que faltan contando el bloque actual (`30·s²` al inicio de un evento de 1 h; decae a 0) |
+| Error del aviso | ±1 h | ±1 bloque (15 min) |
+| Regla de duración | Edad ≥ 1, 2, 3 h | Edad ≥ 4, 8, 12 bloques |
+
+Sin la interpolación, dividir la capacidad entre 4 no cambia nada: si la demanda horaria
+también se reparte en 4 partes iguales, V/C queda igual y los 4 bloques de una hora salen
+idénticos. Con la interpolación el rango medio de la congestibilidad dentro de una hora es
+de 0.018 min (p99 0.32 min).
+
+La secuencia aleatoria del simulador cambió (se sortea por bloque), así que los datasets no
+son comparables semilla por semilla con los de las Secciones 7–12. Los resultados horarios
+se archivaron en `datos_procesados/horario/` y `modelos/horario/`.
+
+### 13.3 Ejecución
+
+```
+python simulador_congestion.py && python entrenador_anticipatorio.py && python ruteo_anticipatorio.py
+python experimento_semillas.py --variante base aviso_perfecto aviso_ruidoso aviso_aditivo aviso_error_10 aviso_error_20 aviso_error_33 --paralelo 3
+python experimento_semillas.py --sensibilidad-aviso
+python experimento_semillas.py --hibrido-umbral --variante <las mismas 7>
+python experimento_semillas.py --comparar aviso_perfecto aviso_error_10
+```
+
+- 7 variantes × 30 semillas = 210 corridas, unas 7.5 h. `hgb` se omitió porque es un
+  experimento de modelo.
+- La comparación de candidatos se corrió solo en el pipeline principal (semilla 42), a
+  15 min. RF + línea/tramo vuelve a tener el menor RMSE con evento en la validación por
+  días: 0.125, contra 0.133 de GradientBoosting + línea/tramo y 0.363 de HistGB +
+  línea/tramo. Con bloques, la comparación tarda ~10 min por semilla.
+
+Pruebas:
+
+- La interpolación conserva exactamente el total de cada hora.
+- El retraso de un incidente decae linealmente hasta 0 y el aviso cuenta hacia atrás.
+- Con bloques, las magnitudes de la congestión son las del dataset horario: media 0.022
+  contra 0.021 min y máximo 12.15 en ambos.
+- La tabla por horizonte de `experimento_semillas.py` reproduce el resumen del ruteo de la
+  semilla 42.
+
+### 13.4 Resultados por horizonte
+
+Variante `base` (sin aviso), 30 semillas: 1,164 bloques con evento y 3,071,024 casos O-D en
+cada horizonte. % del ahorro posible que captura cada sistema, con IC 95% bootstrap por
+conglomerados; la regla usa el umbral por defecto (edad ≥ 2 h).
+
+| Horizonte | Ahorro posible (min) | Reactivo | Regla ≥ 2 h | IA | Híbrido ≥ 2 h | IA − reactivo (min) [IC 95%] | P(IA > reactivo) |
+|---|---|---|---|---|---|---|---|
+| 15 min | 430,306 | **94.8** [92.9; 96.2] | 94.5 [92.4; 96.0] | 93.8 [92.0; 95.3] | 92.9 [90.9; 94.6] | −4,618 [−12,986; 2,963] | 12.5% |
+| 30 min | 298,927 | 77.0 [69.2; 82.5] | 78.0 [70.5; 83.2] | **88.2** [84.6; 91.0] | 88.0 [84.3; 90.8] | **+33,477** [20,734; 45,875] | 100% |
+| 45 min | 206,134 | 32.9 [9.4; 49.1] | 35.4 [13.1; 51.2] | **75.5** [65.7; 83.0] | 75.6 [65.8; 83.1] | **+87,980** [67,774; 109,542] | 100% |
+| 60 min | 139,428 | −53.9 [−111.8; −16.2] | −49.0 [−105.6; −12.3] | **60.0** [44.8; 72.7] | 60.2 [44.9; 72.8] | **+158,785** [123,841; 195,900] | 100% |
+
+Pérdidas (casos en que el sistema queda peor que la ruta estática, min):
+
+| Horizonte | Reactivo | IA | Híbrido |
+|---|---|---|---|
+| 15 min | −19,648 | −15,749 | −15,388 |
+| 30 min | −64,745 | −21,508 | −20,732 |
+| 45 min | −125,886 | −22,161 | −21,438 |
+| 60 min | −195,825 | −20,763 | −20,460 |
+
+Error del modelo en el 20% final (media de 30 semillas; RMSE con evento ponderado por las
+4,012 filas con evento):
+
+| Horizonte | RMSE (min) | RMSE con evento (min) |
+|---|---|---|
+| 15 min | 0.057 | 0.759 |
+| 30 min | 0.072 | 0.764 |
+| 45 min | 0.082 | 0.725 |
+| 60 min | 0.090 | 0.685 |
+
+### 13.5 Por hora del evento y por tipo
+
+Ahorro total (min) en `base`: posible / reactivo / IA.
+
+| Hora del evento | Bloques | 15 min | 30 min | 45 min | 60 min |
+|---|---|---|---|---|---|
+| Hora 0 | 633 | 361,852 / **350,771** / 338,208 | 261,188 / 225,898 / **231,735** | 178,836 / 104,579 / **142,214** | 115,335 / −9,524 / **81,985** |
+| Hora + 1 | 489 | 64,366 / 55,711 / **61,606** | 35,736 / 7,199 / **31,145** | 26,467 / −31,711 / **13,626** | 23,849 / −58,886 / **1,984** |
+| Hora + 2 | 133 | 4,079 / 1,591 / **3,613** | 2,001 / −2,725 / **765** | 830 / −4,895 / −108 | 244 / −6,462 / −287 |
+
+La única celda donde el reactivo gana es la hora 0 a 15 min (P(IA > reactivo) = 0%). En
+todas las demás, P(IA > reactivo) ≥ 88%.
+
+Por tipo, el incidente de plataforma concentra casi todo el ahorro posible: 425,393 de
+430,306 min a 15 min y 120,612 de 139,428 a 60 min. La lluvia aporta 769,752 casos (una
+cuarta parte) en solo 81 bloques, pero casi no hay nada que ahorrar (≤ 1,583 min).
+
+### 13.6 Aviso de restablecimiento: ya no aporta
+
+| Variante | P(error) | Aviso exacto | Termina/sigue correcto | % capturado IA a 15 / 30 / 45 / 60 min |
+|---|---|---|---|---|
+| `base` (sin aviso) | — | — | — | 93.8 / 88.2 / 75.5 / 60.0 |
+| `aviso_perfecto` | 0 | 100% | 100% | 93.6 / 88.1 / 76.0 / 62.2 |
+| `aviso_error_10` | 0.10 | 90.6% | 99.0% | 93.7 / 88.0 / 75.7 / 62.0 |
+| `aviso_error_20` | 0.20 | 80.8% | 97.2% | 93.5 / 88.1 / 75.4 / 61.3 |
+| `aviso_error_33` | 0.33 | 68.9% | 95.8% | 93.7 / 88.0 / 75.8 / 61.2 |
+| `aviso_ruidoso` | σ = 0.5 | — | — | 94.0 / 88.5 / 75.5 / 60.3 |
+| `aviso_aditivo` | 2/3 | 38.0% | 92.3% | 93.6 / 87.8 / 75.5 / 62.7 |
+
+Todas las variantes quedan a menos de 3 puntos de `base`, dentro de sus IC. La comparación
+pareada `aviso_error_10` − `aviso_perfecto` tiene IC que incluye 0 en los 4 horizontes. En
+la versión horaria el aviso era lo que más movía el resultado (47.7% → 74.2%, Sección 8).
+
+**Causa: el simulador filtra la duración restante (limitación #8).** El retraso de un tramo
+suspendido es `s²·R/2`. La severidad `s` es una feature y el retraso observado del bloque
+actual es parte de `congestibilidad_t`, así que el modelo puede despejar R, los minutos de
+cierre que faltan, sin necesidad del aviso. En la versión horaria el retraso era `30·s²`,
+no dependía de R, y la única pista de la duración era el aviso.
+
+Consecuencias:
+
+- El aviso sale redundante porque la misma información ya está en el estado actual.
+- Parte de la ventaja de la IA a 30–60 min, que se concentra en incidentes de plataforma,
+  se debe a esta filtración y no a que el modelo anticipe mejor. En un sistema real, la
+  congestión observada no revela cuánto va a durar el cierre.
+- Los porcentajes de la Sección 13.4 **no deben citarse todavía** como resultado de la
+  tesis. La degradación del reactivo (pierde valor rápido con el horizonte y a 60 min
+  queda peor que la ruta estática) no depende de la filtración, porque el reactivo no usa
+  la severidad; sí depende de que el retraso decaiga durante el evento, que es un supuesto
+  del simulador.
+
+### 13.7 Lectura
+
+1. **La limitación #4 está resuelta en lo técnico.** El pipeline completo (simulación,
+   entrenamiento, ruteo y experimento multi-semilla) trabaja en bloques de 15 min y evalúa
+   los 4 horizontes del objetivo de la tesis.
+2. **El reactivo se degrada con el horizonte.** Captura 94.8% a 15 min, 77.0% a 30, 32.9% a
+   45 y −53.9% a 60 min. A una hora de distancia seguir la congestión de ahora es peor que
+   no hacer nada: en ese tiempo los incidentes terminan o su retraso ya bajó, y el reactivo
+   desvía por un retraso que ya no existe (−195,825 min de pérdidas).
+3. **A 15 min anticipar no sirve.** La congestión de ahora es casi la de dentro de 15 min;
+   el reactivo gana en la hora 0 del evento y la diferencia total no es significativa
+   (P = 12.5%).
+4. **A 30–60 min la IA supera al reactivo con P = 100%**, y sus pérdidas se mantienen
+   estables (~−21,000 min) en vez de crecer con el horizonte. La magnitud está inflada por
+   la limitación #8 (Sección 13.6).
+5. **La regla de duración y el híbrido casi no cambian nada.** La regla ≥ 2 h queda a ≤ 5
+   puntos del reactivo (mejora significativa solo a 45 y 60 min: +5,161 y +6,729 min). El
+   híbrido queda a ≤ 1 punto de la IA y a 15 min pierde 3,556 min [1,132; 6,628] contra
+   ella.
+6. **Los IC pueden ser algo optimistas.** El conglomerado es el bloque, y los bloques
+   consecutivos de un mismo evento están correlacionados (lo mismo pasaba con las horas
+   consecutivas en la versión horaria).
+
+### 13.8 Siguiente paso
+
+1. **Corregir la limitación #8.** El retraso por suspensión no debe depender de la duración
+   real que falta. Hay que definirlo con información observable (por ejemplo, la duración
+   esperada según la edad del evento) o hacer que la severidad observada sea ruidosa.
+   Luego se resimula, se reentrena y se reevalúa para obtener los números citables.
+2. Conglomerar el bootstrap por evento en vez de por bloque.
+3. Sin cambios: limitación #5 (perfiles O-D reales) y documentar las fuentes del aviso en
+   el capítulo de metodología.
 
 ---
 
@@ -1792,18 +2018,23 @@ modelo tenga suficientes ejemplos de eventos disruptivos que aprender.
 ## Mensaje de commit
 
 ```
-feat: sistema hibrido y sensibilidad del umbral de la regla
+feat: horizonte sub-horario con bloques de 15 minutos
 
-- ruteo_anticipatorio.py: sistema hibrido (IA salvo en tramos con evento de
-  edad >= umbral, donde aplica la regla de duracion); regla e hibrido con
-  umbrales 1, 2 y 3.
-- experimento_semillas.py: diferencias pareadas hibrido/regla/IA por umbral
-  y --hibrido-umbral. Reevaluadas 8 variantes con --solo-ruteo (sin
-  reentrenar); totales reproducen la seccion 11.
-- Resultado: la regla solo funciona con edad >= 2 (79.4% del ahorro
-  posible; 39-41% con >= 1 o >= 3). El hibrido supera a la IA por poco
-  (+600 a +1,800 min, P >= 96.9%) pero no a la regla en ahorro (P = 3.2% sin
-  aviso, ~34% con aviso preciso); si pierde 5,000-7,400 min menos que la
-  regla (P >= 99.6%).
-- avances.md: seccion 12.
+- simulador_congestion.py: 76 bloques de 15 min por dia; capacidad
+  horaria / 4; demanda horaria interpolada entre horas vecinas; tasas,
+  duraciones, edad y aviso en bloques; retraso de suspension s^2*R/2;
+  4 rezagos y objetivos a 15, 30, 45 y 60 min.
+- entrenador_anticipatorio.py: un modelo RF + linea/tramo por horizonte;
+  --sin-comparacion.
+- ruteo_anticipatorio.py: evaluacion por bloque y horizonte; umbrales de
+  la regla convertidos a bloques; DataFrame por bloque (pico de memoria
+  2.1 GB -> 0.8 GB).
+- experimento_semillas.py: agregados y bootstrap por horizonte; carga por
+  semilla; tabla resultados_horizontes.csv.
+- Resultado (base, 30 semillas): el reactivo captura 94.8 / 77.0 / 32.9 /
+  -53.9% del ahorro posible a 15 / 30 / 45 / 60 min; la IA 93.8 / 88.2 /
+  75.5 / 60.0% (P(IA > reactivo) = 12.5% a 15 min, 100% a 30-60 min).
+- Limitacion #8: el retraso s^2*R/2 revela la duracion restante; el aviso
+  queda redundante y la ventaja de la IA a 30-60 min esta inflada.
+- avances.md: seccion 13; limitacion #4 resuelta.
 ```

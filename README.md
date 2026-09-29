@@ -44,7 +44,7 @@ Actualmente, el proyecto ha completado la fase de **Construcción de la Base Emp
   * **$\alpha$ y $\beta$**: Parámetros de sensibilidad de la curva ($\alpha = 0.15$, $\beta = 4$).
 
 * **Calibración y Fricción de Andén:** La capacidad teórica se calibró para representar el umbral crítico donde comienza la **fricción de andén** (retrasos operativos causados por el exceso de usuarios, dificultad en el cierre de puertas y aumento en los tiempos de intercambio). En tramos críticos durante la hora pico, esto inyecta un incremento realista del ~40% en tiempos de traslado inmediatos.
-* **Generación de Graficas Temporales:** Transforma la grafica estático en una serie de "fotografías horarias" de la red. Esto permite que el sistema registre cómo el tiempo de viaje en un mismo tramo (ej. Pantitlán-Zaragoza) fluctúa dinámicamente según la hora del día.
+* **Generación de Graficas Temporales:** Transforma la grafica estático en una serie de "fotografías" de la red cada 15 minutos. La demanda horaria se reparte en bloques de 15 min por interpolación entre horas vecinas y la capacidad de los trenes se divide proporcionalmente. Esto permite que el sistema registre cómo el tiempo de viaje en un mismo tramo (ej. Pantitlán-Zaragoza) fluctúa dinámicamente a lo largo del día.
 * **Logro:** Provee el entorno de simulación necesario para generar los *labels* (datos etiquetados) de entrenamiento. Con esto, el sistema ahora puede comparar estados "ideales" vs "congestivos", permitiendo que la IA aprenda a pronosticar saturaciones en horizontes de 10 a 60 minutos.
 
 **Ejecución:**
@@ -60,7 +60,7 @@ python simulador_congestion.py
 Actualmente, el entorno de simulación central está construido y funcional. Se ha completado la integración entre el flujo externo de usuarios y la topología interna de la red del metro:
 
 * **Construcción del Dataset de Ambiente (Matriz O-D):** Se implementó un modelo de gravedad que distribuye probabilísticamente los viajes de acuerdo al perfil espaciotemporal de cada estación (origen, destino o mixto). Esto genera una matriz sintética de Origen-Destino que emula con alta fidelidad las entradas y salidas reales de pasajeros a través de los torniquetes a lo largo del día.
-* **Snapshots Dinámicos de Congestión:** El simulador fue modificado para realizar enrutamiento de pasajeros sobre la grafica topológica (`grafo_metro.py`). Utilizando una función de penalización adaptada (BPR), el sistema calcula el impacto de la carga de pasajeros en cada tramo de vía y toma *snapshots* (fotografías de estado) cada hora. Esto genera nuestro dataset tabular de entrenamiento, el cual contiene la memoria temporal de la red ($t-1, t, t+1$).
+* **Snapshots Dinámicos de Congestión:** El simulador fue modificado para realizar enrutamiento de pasajeros sobre la grafica topológica (`grafo_metro.py`). Utilizando una función de penalización adaptada (BPR), el sistema calcula el impacto de la carga de pasajeros en cada tramo de vía y toma *snapshots* (fotografías de estado) cada 15 minutos. Esto genera nuestro dataset tabular de entrenamiento, el cual contiene la memoria temporal de la red ($t-4, \dots, t$) y los objetivos a 15, 30, 45 y 60 minutos ($t+1, \dots, t+4$).
 
 ### Próximos Pasos (Fase Anticipatoria)
 
