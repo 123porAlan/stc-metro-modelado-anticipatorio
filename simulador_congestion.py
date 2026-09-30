@@ -163,14 +163,19 @@ FACTOR_IMPACTO_EVENTO = {
     "lluvia": 0.6,
     "falla_mecanica": 1.4,
 }
-# Suspensión: la severidad s es la fracción del tiempo con el tramo cerrado mientras dura
-# el evento. Con R minutos de evento por delante (contando el bloque actual) quedan s·R
-# minutos de cierre; una fracción s de los pasajeros llega durante el cierre y espera en
-# promedio la mitad -> retraso medio del bloque = s × s·R/2 = s²·R/2 minutos. Al inicio de
-# un evento de 1 h da 30·s², igual que el modelo horario anterior, y decae hacia el final.
-def retraso_por_suspension(severidad, bloques_restantes):
-    minutos_restantes = bloques_restantes * MINUTOS_BLOQUE
-    return severidad * (minutos_restantes * severidad / 2)
+# Suspensión: mientras dura el incidente, el servicio del tramo se interrumpe en cierres
+# de MINUTOS_CICLO_CIERRE·s minutos por cada ciclo de MINUTOS_CICLO_CIERRE (la severidad s
+# es la fracción del tiempo cerrado). Una fracción s de los pasajeros llega durante un
+# cierre y espera en promedio la mitad -> retraso medio = s × MINUTOS_CICLO_CIERRE·s/2 =
+# 30·s² minutos, constante mientras el evento está activo y 0 al terminar. Es la misma
+# magnitud que el modelo horario de las Secciones 7-12.
+# El retraso NO depende de cuánto falta para que termine el evento (ver avances.md,
+# Sección 14): con s²·R/2 (Sección 13) el modelo podía despejar R del retraso observado,
+# porque s es una feature, y el aviso de restablecimiento quedaba redundante.
+MINUTOS_CICLO_CIERRE = 60
+
+def retraso_por_suspension(severidad):
+    return severidad * (MINUTOS_CICLO_CIERRE * severidad / 2)
 
 def tasa_evento(tipo_evento, hora):
     """Tasa por línea y BLOQUE: la horaria calibrada repartida entre los bloques de la
@@ -395,7 +400,7 @@ for _, fila_manifiesto in df_manifiesto.iterrows():
                 if evento['tipo_evento'] == 'incidente_plataforma':
                     retraso_suspension_por_tramo[k] = max(
                         retraso_suspension_por_tramo[k],
-                        retraso_por_suspension(evento['severidad'], bloques_restantes_de(evento, bloque)))
+                        retraso_por_suspension(evento['severidad']))
                 else:
                     carga_fantasma_por_tramo[k] += evento['severidad'] * FACTOR_IMPACTO_EVENTO[evento['tipo_evento']] * capacidad_tramo(u, v)
                 previo = info_tramos_bloque.get(k)
