@@ -2,7 +2,7 @@
 
 **Alumno:** Alan Bellon García
 **Asesor:** M. en Fil. C. Enrique Francisco Soto Astorga
-**Fecha de este reporte:** 2026-09-30 (actualizado — ver [Sección 4](#4-extensión-multi-día--eventos-estocásticos-2026-09-27) , [Sección 5](#5-ubicación-en-la-red-comparación-de-modelos-y-evaluación-sistemática-del-ruteo-2026-09-27) , [Sección 6](#6-capacidad-por-línea-suspensión-de-tramos-tasas-calibradas-y-experimento-multi-semilla-2026-09-27) , [Sección 7](#7-selección-fija-de-modelo-30-semillas-y-edad-del-evento-2026-09-27) , [Sección 8](#8-aviso-de-restablecimiento-y-histgb-en-el-ruteo-2026-09-27) , [Sección 9](#9-aviso-con-error-aditivo-2026-09-27) , [Sección 10](#10-ruteo-por-edad-del-evento-hora-0--1-y--2-2026-09-27) , [Sección 11](#11-sensibilidad-del-aviso-reactivo-con-regla-de-duración-y-hora--1-por-tipo-2026-09-27) , [Sección 12](#12-sistema-híbrido-y-sensibilidad-del-umbral-de-la-regla-2026-09-27) , [Sección 13](#13-horizonte-sub-horario-bloques-de-15-minutos-2026-09-29) y [Sección 14](#14-retraso-por-suspensión-sin-filtración-de-la-duración-2026-09-30))
+**Fecha de este reporte:** 2026-09-30 (actualizado — ver [Sección 4](#4-extensión-multi-día--eventos-estocásticos-2026-09-27) , [Sección 5](#5-ubicación-en-la-red-comparación-de-modelos-y-evaluación-sistemática-del-ruteo-2026-09-27) , [Sección 6](#6-capacidad-por-línea-suspensión-de-tramos-tasas-calibradas-y-experimento-multi-semilla-2026-09-27) , [Sección 7](#7-selección-fija-de-modelo-30-semillas-y-edad-del-evento-2026-09-27) , [Sección 8](#8-aviso-de-restablecimiento-y-histgb-en-el-ruteo-2026-09-27) , [Sección 9](#9-aviso-con-error-aditivo-2026-09-27) , [Sección 10](#10-ruteo-por-edad-del-evento-hora-0--1-y--2-2026-09-27) , [Sección 11](#11-sensibilidad-del-aviso-reactivo-con-regla-de-duración-y-hora--1-por-tipo-2026-09-27) , [Sección 12](#12-sistema-híbrido-y-sensibilidad-del-umbral-de-la-regla-2026-09-27) , [Sección 13](#13-horizonte-sub-horario-bloques-de-15-minutos-2026-09-29) , [Sección 14](#14-retraso-por-suspensión-sin-filtración-de-la-duración-2026-09-30) y [Sección 15](#15-perfiles-de-estación-derivados-de-datos-2026-09-30))
 
 Este documento resume el estado técnico y metodológico del prototipo descrito en el
 anexo de titulación (*"Modelado y prototipado de un sistema de Inteligencia Artificial
@@ -202,9 +202,11 @@ largos conocidos (p. ej. Ciudad Azteca, La Raza, Tacubaya).
    [Sección 13](#13-horizonte-sub-horario-bloques-de-15-minutos-2026-09-29)): el simulador trabaja en bloques de 15 min y el
    modelo predice a 15, 30, 45 y 60 min. La demanda O-D sigue siendo horaria y se
    interpola dentro de cada hora (supuesto documentado en la Sección 13.2).
-5. **Perfiles origen/destino hardcodeados** (listas fijas de 10 estaciones): no se
-   derivan de un análisis estadístico de la matriz de afluencia real, sino de un
-   supuesto manual razonado.
+5. ~~**Perfiles origen/destino hardcodeados**~~ **RESUELTO 2026-09-30** (ver
+   [Sección 15](#15-perfiles-de-estación-derivados-de-datos-2026-09-30)): cada estación tiene pesos continuos de origen, destino y
+   mixto derivados de la afluencia diaria real (domingo / día laboral) y de la topología
+   GTFS (periferia y terminales). Siguen siendo supuestos la forma de las curvas horarias
+   de cada perfil y la tabla de atractividad, porque el CSV no trae datos por hora.
 6. **[2026-09-27] Eventos raros → poca evidencia** (Secciones 6.4 y 6.5): con tasas
    calibradas solo 0.08–0.29% de las filas tienen evento. La selección de modelo cambia
    entre semillas y la ventaja del ruteo anticipatorio en ahorro total no es
@@ -2105,11 +2107,136 @@ ahorra 2,004 min y la IA 75,305.
 7. Los IC siguen conglomerados por bloque y pueden ser algo optimistas (Sección 13.7,
    punto 6).
 
-### 14.8 Siguiente paso
+### 14.8 Siguiente paso (punto 2, limitación #5, ejecutado — ver [Sección 15](#15-perfiles-de-estación-derivados-de-datos-2026-09-30); punto 1 descartado)
 
 1. Conglomerar el bootstrap por evento en vez de por bloque.
 2. Sin cambios: limitación #5 (perfiles O-D reales) y documentar las fuentes del aviso en
    el capítulo de metodología.
+
+
+## 15. Perfiles de estación derivados de datos (2026-09-30)
+
+Esta sección resuelve la limitación #5. Antes, 10 estaciones eran "origen" y 10 "destino"
+por listas escritas a mano, y las otras 143 eran "mixto". Ahora el perfil de cada estación
+sale de la afluencia real y de la topología de la red. El punto 1 de la Sección 14.8
+(conglomerar el bootstrap por evento) se descarta: la evaluación estadística se dio por
+cerrada.
+
+### 15.1 Qué permiten los datos
+
+`afluenciastc_desglosado_01_2026.csv` trae **entradas diarias** por estación y tipo de pago
+(2021-01-01 a 2026-01-31, 163 estaciones), **sin hora ni salidas**. Eso tiene dos
+consecuencias:
+
+- No se puede comparar el pico matutino contra el vespertino ni medir la curva horaria de
+  cada estación.
+- El total diario no distingue origen de destino. Una estación residencial registra sus
+  entradas en la mañana y una laboral en la tarde, pero los totales del día se parecen,
+  porque la gente regresa.
+
+Sí se puede medir qué tan "de traslado al trabajo" es una estación. En domingo caen las
+entradas en los dos extremos del viaje al trabajo, mientras que las estaciones de ocio o
+turismo se mantienen o suben. En 2025, la mediana de domingo / día laboral va de 0.18
+(Norte 45, zona industrial) a 1.21 (La Villa y Basílica). La mezcla de tipos de pago casi
+no varía entre estaciones (desviación estándar 0.03) y no se usa.
+
+### 15.2 Método
+
+Para cada estación se calculan dos índices en [0, 1]:
+
+- **Traslado `c`** (CSV, año 2025):
+  - `r_dom = mediana de entradas en domingo / mediana en día laboral`.
+  - La mediana laboral excluye las vacaciones escolares (1–6 ene, Semana Santa y 22–31 dic).
+  - Se descartan los días con menos del 20% de la mediana de la estación (cierres u obras).
+  - `c = 1 − rango percentil de r_dom`. Alto = traslado al trabajo; bajo = ocio o turismo.
+- **Origen `a`** (grafo GTFS): `a = (rango percentil del tiempo medio de viaje a las demás
+  estaciones + es_terminal) / 2`. La periferia sola no basta: por tiempo de viaje Pantitlán
+  sale "central" (percentil 0.32) por ser un nodo de 4 líneas. Las terminales de línea
+  (19 en el grafo) concentran el transporte alimentador (CETRAM), que es lo que las hace
+  origen de los viajes de la mañana.
+
+Pesos de cada estación (suman 1): `w_origen = c·a`, `w_destino = c·(1 − a)` y
+`w_mixto = 1 − c`. Una estación de traslado se reparte entre origen y destino según su
+posición en la red; una de ocio queda como mixta.
+
+- **Curva horaria de entradas** = `w_origen·curva_origen + w_destino·curva_destino +
+  w_mixto·curva_mixta`. Cada estación tiene su propia curva.
+- **Atractividad como destino** en el modelo gravitacional = la misma mezcla aplicada a la
+  tabla de atractividad por periodo (mañana, tarde, valle).
+- **Perfil discreto** = el peso mayor. Solo se usa para reportar y para las columnas
+  `perfil_*` de la matriz O-D.
+
+Siguen siendo supuestos documentados: la forma de las tres curvas horarias, la curva de fin
+de semana derivada de la laboral y la tabla de atractividad. Observatorio y Juanacatlán no
+tienen estadística en 2025 (cerradas casi todo el año) y reciben `c = 0.5`.
+
+Los resultados por estación se guardan en `datos_procesados/perfiles_estaciones.csv`.
+
+### 15.3 Bug corregido: estaciones sin nodo en el grafo
+
+12 nombres del CSV no coincidían con los del grafo (11 estaciones; Peñón Viejo aparece con
+dos grafías). Por ejemplo: `Zócalo/Tenochtitlan` contra `Zócalo`, `Chapultepec` contra
+`Chapultepec ` (con espacio), `Garibaldi/Lagunilla` contra `Garibaldi y Lagunilla` y
+`Peñón Viejo` contra `Penón Viejo`. El simulador no encontraba su nodo y **descartaba en
+silencio todos los viajes que entraban o salían de ellas**: 398,096 de 3,058,747 viajes el
+2026-01-13 (13%). Se corrigió con `ALIAS_ESTACIONES` en el generador. Ahora las 163
+estaciones coinciden.
+
+**Todos los resultados anteriores a esta sección se calcularon sin esos viajes.**
+
+### 15.4 Resultado de la clasificación
+
+98 estaciones quedan como mixto, 56 como destino y 9 como origen (antes 143 / 10 / 10).
+
+| Estación | r_dom | c | Periferia | Terminal | a | w_origen | w_destino | w_mixto | Perfil |
+|---|---|---|---|---|---|---|---|---|---|
+| Tláhuac | 0.41 | 0.73 | 1.00 | sí | 1.00 | 0.73 | 0.00 | 0.27 | origen |
+| Universidad | 0.34 | 0.88 | 0.85 | sí | 0.93 | 0.81 | 0.06 | 0.12 | origen |
+| El Rosario | 0.41 | 0.72 | 0.79 | sí | 0.89 | 0.64 | 0.08 | 0.28 | origen |
+| Pantitlán | 0.47 | 0.56 | 0.32 | sí | 0.66 | 0.37 | 0.19 | 0.44 | mixto |
+| Indios Verdes | 0.57 | 0.27 | 0.67 | sí | 0.83 | 0.22 | 0.04 | 0.73 | mixto |
+| Polanco | 0.29 | 0.94 | 0.67 | no | 0.34 | 0.32 | 0.62 | 0.06 | destino |
+| Insurgentes | 0.42 | 0.70 | 0.23 | no | 0.11 | 0.08 | 0.62 | 0.30 | destino |
+| Juárez | 0.40 | 0.78 | 0.12 | no | 0.06 | 0.05 | 0.74 | 0.22 | destino |
+| Zócalo | 0.77 | 0.06 | 0.11 | no | 0.06 | 0.00 | 0.06 | 0.94 | mixto |
+| Bellas Artes | 0.96 | 0.01 | 0.05 | no | 0.02 | 0.00 | 0.01 | 0.99 | mixto |
+| La Villa y Basílica | 1.21 | 0.00 | 0.65 | no | 0.33 | 0.00 | 0.00 | 1.00 | mixto |
+
+- Mayor peso de destino: Niños Héroes, Hospital General, Doctores, Balderas, Colegio
+  Militar, Eugenia, Patriotismo y Juárez (oficinas, hospitales y juzgados).
+- Mayor peso de mixto: La Villa y Basílica, Bosque de Aragón, Bellas Artes, Merced,
+  Garibaldi, Autobuses del Norte, Lagunilla y Pino Suárez (turismo, comercio y terminales
+  foráneas).
+- Mayor peso de origen: Barranca del Muerto, Universidad, Tláhuac, Politécnico, El Rosario,
+  La Paz, Martín Carrera y Mixcoac.
+
+**Limitación:** los grandes CETRAM (Pantitlán, Indios Verdes, Ciudad Azteca, Tasqueña y
+Cuatro Caminos) quedan como mixto. Mantienen mucha afluencia en domingo (r_dom 0.47–0.57)
+por viajes regionales y de comercio, así que su `c` es bajo. Conservan un peso de origen de
+0.22–0.37 y su curva sigue teniendo pico matutino, pero menor que con la lista anterior. Se
+dejó así en vez de forzarlo con un ajuste a mano; una fuente horaria (por ejemplo, la
+Encuesta Origen-Destino 2017 del INEGI) lo resolvería.
+
+### 15.5 Integración con los bloques de 15 minutos
+
+No hubo que cambiar el simulador. La interpolación de la Sección 13 reparte la carga horaria
+ya enrutada, así que funciona igual con cualquier curva horaria por estación. Prueba con la
+semilla 42 (simulador → entrenador → ruteo):
+
+| Métrica | Perfiles fijos (Sec. 14) | Perfiles de datos |
+|---|---|---|
+| Entradas totales en los 14 días | 44,864,272 | 45,015,150 |
+| Carga media por tramo y bloque | 2,206 | 2,535 (+15%, viajes recuperados) |
+| Congestibilidad media (min) | 0.0221 | 0.0258 |
+| Rango medio dentro de una hora (min) | 0.0168 | 0.0191 |
+
+El pipeline completo corre sin cambios. Los resultados multi-semilla de la Sección 14 aún
+usan las matrices O-D anteriores (respaldadas en `datos_procesados/od_perfiles_fijos/`).
+
+### 15.6 Siguiente paso
+
+1. Reejecutar el experimento completo (7 variantes × 30 semillas) con las matrices O-D
+   nuevas, para actualizar la tabla de la Sección 14.4 con la demanda corregida.
 
 ---
 

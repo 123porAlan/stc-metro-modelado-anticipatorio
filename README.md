@@ -17,7 +17,7 @@ Actualmente, el proyecto ha completado la fase de **Construcción de la Base Emp
 ### 2. Motor Sintético de Demanda (Afluencia Horaria)
 
 * **Script:** `generador_sintetico_horario.py`
-* **Descripción:** Expande el consolidado de afluencia diaria hacia una granularidad de alta frecuencia (por hora). Implementa un motor de distribución bimodal que clasifica las estaciones en tres perfiles (`origen`, `destino` y `mixto`) para simular la asimetría real de las horas pico matutinas y vespertinas.
+* **Descripción:** Expande el consolidado de afluencia diaria hacia una granularidad de alta frecuencia (por hora). Cada estación recibe pesos continuos de tres perfiles (`origen`, `destino` y `mixto`) derivados de la afluencia real (cociente domingo / día laboral) y de la topología de la red (periferia y terminales); su curva horaria es la mezcla de las curvas de esos perfiles, para simular la asimetría de las horas pico matutinas y vespertinas.
 * **Logro:** Genera el dataset maestro limpio y sin errores de codificación (`afluencia_sintetica_horaria_avanzada_2026.csv`), dotando al sistema de la dimensión temporal necesaria para simular estrés.
 
 ### 3. Exploración Histórica

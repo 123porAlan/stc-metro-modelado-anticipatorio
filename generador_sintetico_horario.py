@@ -1,5 +1,9 @@
+import re
+import collections
+
 import pandas as pd
 import numpy as np
+import networkx as nx
 
 print("Cargando dataset de afluencia diaria...")
 # Asegúrate de tener tu archivo original en la misma ruta
@@ -13,8 +17,27 @@ def limpiar_texto(texto):
             return texto
     return texto
 
-df_diario["estacion"] = df_diario["estacion"].apply(limpiar_texto)
+# Nombres del CSV que no coinciden con los del grafo GTFS (grafo_base_metro.gexf). Sin
+# este mapeo el simulador no encuentra el nodo de esas estaciones y descarta en silencio
+# todos sus viajes (ver avances.md, Sección 15).
+ALIAS_ESTACIONES = {
+    "Chapultepec": "Chapultepec ",
+    "Etiopía/Plaza de la Transparencia": "Etiopía y Plaza de la Transparencia",
+    "Ferrería/Arena Ciudad de México": "Ferrería y Arena Ciudad de México",
+    "Garibaldi/Lagunilla": "Garibaldi y Lagunilla",
+    "Gómez Farias": "Gómez Farías",
+    "La Villa/Basílica": "La Villa y Basílica",
+    "Niños Héroes": "Niños Héroes y  Poder Judicial CDMX",
+    "Peñón Viejo": "Penón Viejo",
+    "Peñón viejo": "Penón Viejo",
+    "UAM-Azcapotzalco": "UAM Azcapotzalco",
+    "Viveros/Derechos Humanos": "Viveros y  Derechos Humanos",
+    "Zócalo/Tenochtitlan": "Zócalo",
+}
+
+df_diario["estacion"] = df_diario["estacion"].apply(limpiar_texto).replace(ALIAS_ESTACIONES)
 df_diario["linea"] = df_diario["linea"].apply(limpiar_texto)
+df_historico = df_diario  # el histórico completo se usa para derivar los perfiles
 
 # ====================================================================================
 # PARAMETRIZACIÓN DE LOS DÍAS DE SIMULACIÓN (multi-día, laboral + fin de semana)
@@ -34,7 +57,7 @@ def tipo_de_dia(fecha_str):
 # hora (como hacía la versión de un solo día) generaba un archivo de ~300 MB sin uso
 # real aguas abajo. Al filtrar aquí, el costo de cómputo/disco escala con los días de
 # simulación pedidos, no con el histórico completo.
-df_diario = df_diario[df_diario["fecha"].isin(DIAS_SIMULACION)].copy()
+df_diario = df_historico[df_historico["fecha"].isin(DIAS_SIMULACION)].copy()
 
 df_total_diario = (
     df_diario.groupby(["fecha", "linea", "estacion"])["afluencia"].sum().reset_index()
@@ -89,15 +112,107 @@ def derivar_perfil_fin_semana(df_perfil):
 perfil_fin_semana = derivar_perfil_fin_semana(perfil_laboral)
 perfiles_horarios = pd.concat([perfil_laboral, perfil_fin_semana], ignore_index=True)
 
-estaciones_origen = ["Pantitlán", "Indios Verdes", "Ciudad Azteca", "Tláhuac", "La Paz", "El Rosario", "Martín Carrera", "Tasqueña", "Universidad", "Constitución de 1917"]
-estaciones_destino = ["Polanco", "Auditorio", "Insurgentes", "Chilpancingo", "Sevilla", "Zócalo/Tenochtitlan", "Bellas Artes", "Juárez", "Coyoacán", "Zapata"]
+# ====================================================================================
+# PERFILES DE ESTACIÓN DERIVADOS DE DATOS (limitación #5, ver avances.md, Sección 15)
+# ====================================================================================
+# El CSV de afluencia solo trae ENTRADAS DIARIAS por estación (sin hora ni salidas), así
+# que no puede decir directamente si una estación es origen o destino. Cada estación se
+# describe con dos índices continuos en [0, 1]:
+# - c (traslado), del CSV: las estaciones de traslado al trabajo, en cualquiera de sus
+#   dos extremos, pierden mucha más afluencia en domingo que las de ocio o turismo.
+# - a (origen), del grafo GTFS: estaciones periféricas (tiempo medio de viaje alto) o
+#   terminales de línea, donde llega el transporte alimentador (CETRAM), son origen de
+#   los viajes de la mañana.
+# y se reparte entre los tres perfiles: w_origen = c·a, w_destino = c·(1 − a),
+# w_mixto = 1 − c. La forma de las curvas horarias de cada perfil sigue siendo un
+# supuesto (no hay datos por hora); lo que sale de los datos es la mezcla de cada estación.
+PERFILES = ["origen", "destino", "mixto"]
+VENTANA_ESTADISTICAS = ("2025-01-01", "2025-12-31")
+# Días laborales atípicos que no entran en la mediana laboral (vacaciones escolares).
+VACACIONES = [("2025-01-01", "2025-01-06"), ("2025-04-14", "2025-04-18"), ("2025-12-22", "2025-12-31")]
+# Un día con menos de esta fracción de la mediana de la estación se trata como cierre.
+FRACCION_CIERRE = 0.2
 
-def asignar_perfil(estacion):
-    if estacion in estaciones_origen: return "origen"
-    elif estacion in estaciones_destino: return "destino"
-    else: return "mixto"
+def linea_de_nodo(nodo_id):
+    """Misma convención que simulador_congestion.py: el ID GTFS del andén trae 'L<línea>-'."""
+    m = re.search(r"L([0-9A-Za-z]+)[-_]", nodo_id)
+    return m.group(1) if m else None
 
-df_total_diario["perfil"] = df_total_diario["estacion"].apply(asignar_perfil)
+def indice_traslado(df_afluencia):
+    """
+    c por estación = 1 − rango percentil de r_dom, con r_dom = mediana de entradas en
+    domingo / mediana en día laboral (sin vacaciones), en VENTANA_ESTADISTICAS. Se usan
+    medianas y se descartan los días de cierre para que obras o suspensiones no muevan el
+    índice.
+    """
+    df = df_afluencia[df_afluencia["fecha"].between(*VENTANA_ESTADISTICAS)]
+    total = df.groupby(["fecha", "estacion"])["afluencia"].sum().reset_index()
+    fecha = pd.to_datetime(total["fecha"])
+    dia_semana = fecha.dt.dayofweek
+    vacaciones = pd.Series(False, index=total.index)
+    for inicio, fin in VACACIONES:
+        vacaciones |= fecha.between(inicio, fin)
+    cierre = total["afluencia"] < FRACCION_CIERRE * total.groupby("estacion")["afluencia"].transform("median")
+    laboral = total[(dia_semana < 5) & ~vacaciones & ~cierre].groupby("estacion")["afluencia"].median()
+    domingo = total[(dia_semana == 6) & ~cierre].groupby("estacion")["afluencia"].median()
+    r_dom = (domingo / laboral).dropna()
+    return pd.DataFrame({"r_dom": r_dom, "c": 1 - r_dom.rank(pct=True)})
+
+def indice_origen(G):
+    """
+    a por estación = (rango percentil del tiempo medio de viaje desde la estación a todas
+    las demás + 1 si es terminal de alguna línea) / 2. El tiempo es el peso estático
+    'tiempo_minutos' del grafo; una estación con varios andenes toma el andén más cercano.
+    """
+    nombre = nx.get_node_attributes(G, "nombre")
+    andenes = collections.defaultdict(list)
+    for n in G:
+        andenes[nombre[n]].append(n)
+    distancias = dict(nx.all_pairs_dijkstra_path_length(G, weight="tiempo_minutos"))
+    tiempo_medio = {}
+    for estacion, nodos in andenes.items():
+        tiempos = [min(distancias[a].get(b, np.inf) for a in nodos for b in otros)
+                   for otra, otros in andenes.items() if otra != estacion]
+        tiempo_medio[estacion] = np.mean(tiempos)
+    # Terminal: algún andén con un solo tramo de su propia línea.
+    grado_linea = collections.Counter()
+    for u, v in G.edges():
+        if linea_de_nodo(u) is not None and linea_de_nodo(u) == linea_de_nodo(v):
+            grado_linea[u] += 1
+            grado_linea[v] += 1
+    terminal = {estacion: int(any(grado_linea[n] == 1 for n in nodos)) for estacion, nodos in andenes.items()}
+    df = pd.DataFrame({"tiempo_medio_min": tiempo_medio, "terminal": terminal})
+    df["periferia"] = df["tiempo_medio_min"].rank(pct=True)
+    df["a"] = (df["periferia"] + df["terminal"]) / 2
+    return df
+
+def derivar_perfiles_estaciones(df_afluencia, G):
+    """
+    Pesos de origen/destino/mixto de cada estación del CSV y su perfil discreto (el de
+    mayor peso, solo para reportar). Una estación sin estadística en la ventana (c) o sin
+    nodo en el grafo (a) recibe el valor neutro 0.5 en ese índice.
+    """
+    estaciones = pd.Index(sorted(df_afluencia["estacion"].unique()), name="estacion")
+    df = pd.DataFrame(index=estaciones).join(indice_traslado(df_afluencia)).join(indice_origen(G))
+    for indice in ("c", "a"):
+        faltantes = df.index[df[indice].isna()].tolist()
+        if faltantes:
+            print(f"   AVISO: sin índice {indice} para {faltantes}; se usa 0.5")
+        df[indice] = df[indice].fillna(0.5)
+    df["w_origen"] = df["c"] * df["a"]
+    df["w_destino"] = df["c"] * (1 - df["a"])
+    df["w_mixto"] = 1 - df["c"]
+    df["perfil"] = df[[f"w_{p}" for p in PERFILES]].idxmax(axis=1).str.removeprefix("w_")
+    return df.reset_index()
+
+G_base = nx.read_gexf("grafo_base_metro.gexf")
+df_perfiles = derivar_perfiles_estaciones(df_historico, G_base)
+df_perfiles.to_csv("datos_procesados/perfiles_estaciones.csv", index=False, encoding="utf-8-sig")
+print(f"Perfiles derivados para {len(df_perfiles)} estaciones: "
+      f"{df_perfiles['perfil'].value_counts().to_dict()} (datos_procesados/perfiles_estaciones.csv)")
+
+df_total_diario = df_total_diario.merge(df_perfiles[["estacion", "perfil", "w_origen", "w_destino", "w_mixto"]],
+                                        on="estacion", how="left")
 
 print("Cruzando datos y calculando afluencia de ENTRADA por hora...")
 
@@ -105,19 +220,11 @@ print("Cruzando datos y calculando afluencia de ENTRADA por hora...")
 # con las 24 horas de SU perfil (laboral o fin de semana).
 df_horario = pd.merge(df_total_diario, perfiles_horarios, on="tipo_dia")
 
-condiciones = [
-    df_horario["perfil"] == "origen",
-    df_horario["perfil"] == "destino",
-    df_horario["perfil"] == "mixto",
-]
-elecciones = [
-    df_horario["afluencia"] * df_horario["peso_origen"],
-    df_horario["afluencia"] * df_horario["peso_destino"],
-    df_horario["afluencia"] * df_horario["peso_mixto"],
-]
-
-df_horario["afluencia_sintetica_hora"] = np.select(condiciones, elecciones, default=0).astype(int)
-df_horario = df_horario.drop(columns=["afluencia", "peso_origen", "peso_destino", "peso_mixto"]).sort_values(by=["fecha", "linea", "estacion", "hora"])
+# Curva horaria propia de cada estación: mezcla de las curvas de los tres perfiles con
+# los pesos derivados de los datos.
+curva_estacion = sum(df_horario[f"w_{p}"] * df_horario[f"peso_{p}"] for p in PERFILES)
+df_horario["afluencia_sintetica_hora"] = (df_horario["afluencia"] * curva_estacion).astype(int)
+df_horario = df_horario.drop(columns=["afluencia"] + [f"peso_{p}" for p in PERFILES]).sort_values(by=["fecha", "linea", "estacion", "hora"])
 df_horario = df_horario[df_horario["hora"] >= 5]
 
 # Guardamos el archivo base (entradas), ya multi-día.
@@ -128,24 +235,28 @@ df_horario.to_csv("datos_procesados/entradas_sinteticas_horarias.csv", index=Fal
 # ====================================================================================
 print("\n--- Iniciando Generación de Matrices Origen-Destino (Modelo Gravitacional) ---")
 
-def calcular_atractividad_destino(hora, perfil):
-    """
-    Asigna un peso de probabilidad para que una estación sea elegida como destino.
-    """
+# Peso de atracción de cada perfil como destino, por periodo del día (supuesto): en la
+# mañana atraen las zonas laborales ('destino'), en la tarde la gente regresa a casa
+# ('origen') y en horas valle el flujo es más equilibrado.
+ATRACTIVIDAD_POR_PERIODO = {
+    "manana": {"origen": 0.10, "destino": 0.65, "mixto": 0.25},
+    "tarde": {"origen": 0.65, "destino": 0.10, "mixto": 0.25},
+    "valle": {"origen": 0.25, "destino": 0.25, "mixto": 0.50},
+}
+
+def periodo_del_dia(hora):
     if 5 <= hora <= 11:
-        # En la mañana, las zonas laborales ('destino') atraen a la mayoría.
-        if perfil == 'destino': return 0.65
-        elif perfil == 'mixto': return 0.25
-        else: return 0.10
-    elif 16 <= hora <= 21:
-        # En la tarde, la gente regresa a casa ('origen').
-        if perfil == 'origen': return 0.65
-        elif perfil == 'mixto': return 0.25
-        else: return 0.10
-    else:
-        # En horas valle, el flujo es más equilibrado.
-        if perfil == 'mixto': return 0.50
-        else: return 0.25
+        return "manana"
+    if 16 <= hora <= 21:
+        return "tarde"
+    return "valle"
+
+def calcular_atractividad_destino(df):
+    """Peso de cada fila (hora, estación) como destino: la tabla del periodo mezclada con
+    los pesos de perfil de la estación."""
+    tabla = pd.DataFrame(ATRACTIVIDAD_POR_PERIODO).T
+    por_periodo = tabla.loc[df["hora"].map(periodo_del_dia)].reset_index(drop=True)
+    return sum(df[f"w_{p}"].to_numpy() * por_periodo[p].to_numpy() for p in PERFILES)
 
 def generar_matriz_od(df_horario, dia_simulacion):
     """Construye la matriz O-D sintética de un único día a partir del dataframe
@@ -154,9 +265,7 @@ def generar_matriz_od(df_horario, dia_simulacion):
     if df_dia.empty:
         raise ValueError(f"No hay datos de afluencia para el día {dia_simulacion}.")
 
-    df_dia['peso_atractividad'] = df_dia.apply(
-        lambda row: calcular_atractividad_destino(row['hora'], row['perfil']), axis=1
-    )
+    df_dia['peso_atractividad'] = calcular_atractividad_destino(df_dia)
 
     df_origen = df_dia[['hora', 'estacion', 'perfil', 'afluencia_sintetica_hora']].rename(
         columns={'estacion': 'origen', 'perfil': 'perfil_origen', 'afluencia_sintetica_hora': 'entradas'}
