@@ -1999,6 +1999,10 @@ Sección 13 se archivaron en `datos_procesados/bloques_v1/` y `modelos/bloques_v
 
 ### 14.4 Resultados por horizonte
 
+> **Actualizado en la [Sección 15.7](#15-perfiles-de-estación-derivados-de-datos-2026-09-30).** Estas tablas usan la demanda con perfiles
+> fijos y sin los viajes de las 11 estaciones sin nodo (Sección 15.3); se conservan como
+> registro (`datos_procesados/bloques_v2/`, `modelos/bloques_v2/`).
+
 Variante `base` (sin aviso), 30 semillas: 1,164 bloques con evento y 3,071,024 casos O-D por
 horizonte. % del ahorro posible que captura cada sistema, con IC 95% bootstrap por
 conglomerados; la regla y el híbrido usan el umbral por defecto (edad ≥ 2 h).
@@ -2233,10 +2237,73 @@ semilla 42 (simulador → entrenador → ruteo):
 El pipeline completo corre sin cambios. Los resultados multi-semilla de la Sección 14 aún
 usan las matrices O-D anteriores (respaldadas en `datos_procesados/od_perfiles_fijos/`).
 
-### 15.6 Siguiente paso
+### 15.6 Siguiente paso (ejecutado — ver Sección 15.7)
 
 1. Reejecutar el experimento completo (7 variantes × 30 semillas) con las matrices O-D
    nuevas, para actualizar la tabla de la Sección 14.4 con la demanda corregida.
+
+### 15.7 Resultados con la demanda corregida (2026-10-01)
+
+Mismos comandos de la Sección 13.3 más `--comparar base aviso_perfecto`: 210 corridas,
+7.7 h. Los bloques con evento y los casos O-D evaluados son los mismos que en la Sección 14
+(1,164 bloques y 3,071,024 casos por horizonte), porque dependen de los eventos y de las
+rutas estáticas, no de la demanda.
+
+**Variante `base` (sin aviso)**, % del ahorro posible con IC 95% bootstrap por
+conglomerados; la regla y el híbrido usan el umbral por defecto (edad ≥ 2 h):
+
+| Horizonte | Ahorro posible (min) | Reactivo | Regla ≥ 2 h | IA | Híbrido ≥ 2 h | IA − reactivo (min) [IC 95%] | P(IA > reactivo) |
+|---|---|---|---|---|---|---|---|
+| 15 min | 349,701 | 86.6 [78.4; 92.9] | 87.4 [79.6; 93.2] | 86.4 [79.6; 91.1] | 84.7 [77.6; 89.9] | −680 [−14,013; 14,293] | 46.0% |
+| 30 min | 291,937 | 68.8 [53.6; 80.1] | 74.6 [61.3; 84.4] | 75.0 [63.3; 83.2] | 76.0 [64.4; 83.9] | +18,192 [−3,066; 42,266] | 94.8% |
+| 45 min | 236,729 | 42.2 [15.6; 60.8] | 50.5 [26.3; 67.0] | **62.5** [51.9; 70.5] | 63.0 [52.4; 71.0] | **+48,121** [14,125; 84,665] | 99.8% |
+| 60 min | 182,190 | 0.0 [−44.9; 29.5] | 12.2 [−28.1; 38.7] | **44.2** [26.0; 57.3] | 44.6 [26.4; 57.6] | **+80,459** [41,510; 121,539] | 100% |
+
+**Variante `aviso_perfecto`** (reactivo y regla no cambian):
+
+| Horizonte | IA | Híbrido ≥ 2 h | P(IA > reactivo) | P(IA > regla) |
+|---|---|---|---|---|
+| 15 min | 88.2 [81.5; 92.6] | 86.4 [79.4; 91.4] | 76.7% | 61.0% |
+| 30 min | **79.9** [68.6; 87.6] | 80.1 [69.0; 87.6] | 100% | 92.2% |
+| 45 min | **71.3** [62.0; 78.7] | 71.1 [61.5; 78.6] | 100% | 100% |
+| 60 min | **62.7** [48.5; 73.0] | 62.0 [47.3; 72.4] | 100% | 100% |
+
+Pérdidas en `base` (min) y error del modelo (media de 30 semillas, `base` / `aviso_perfecto`):
+
+| Horizonte | Pérdidas reactivo | Pérdidas IA | Pérdidas híbrido | RMSE (min) | RMSE con evento (min) |
+|---|---|---|---|---|---|
+| 15 min | −45,935 | −34,150 | −28,157 | 0.040 / 0.039 | 0.571 / 0.532 |
+| 30 min | −89,582 | −51,412 | −45,256 | 0.054 / 0.052 | 0.692 / 0.614 |
+| 45 min | −133,082 | −44,011 | −42,192 | 0.064 / 0.062 | 0.759 / 0.657 |
+| 60 min | −176,519 | −50,092 | −49,327 | 0.072 / 0.069 | 0.773 / 0.656 |
+
+**Aviso** (% capturado por la IA a 15 / 30 / 45 / 60 min):
+
+| Variante | % capturado IA |
+|---|---|
+| `base` (sin aviso) | 86.4 / 75.0 / 62.5 / 44.2 |
+| `aviso_perfecto` | 88.2 / 79.9 / 71.3 / 62.7 |
+| `aviso_error_10` | 87.7 / 78.5 / 70.1 / 59.4 |
+| `aviso_error_20` | 87.4 / 79.0 / 70.4 / 62.0 |
+| `aviso_error_33` | 87.5 / 77.2 / 68.9 / 58.5 |
+| `aviso_aditivo` | 87.1 / 77.5 / 66.8 / 57.5 |
+
+`aviso_perfecto` − `base`: +6,238 [2,342; 10,390], +14,238 [7,687; 22,435], +20,792
+[12,260; 30,969] y +33,696 [23,061; 45,966] min a 15 / 30 / 45 / 60 min (P ≥ 99.8%).
+`aviso_error_10` − `aviso_perfecto`: −1,675, −4,072, −2,772 y −6,060 min; el IC excluye 0
+a 15, 30 y 60 min.
+
+Lectura:
+
+1. **Las conclusiones de la Sección 14.7 se mantienen con la demanda corregida.** Los
+   porcentajes cambian menos de 4 puntos:
+   - A 15 min anticipar no sirve (P = 46% sin aviso).
+   - A 30 min la ventaja depende del aviso.
+   - A 45–60 min la IA supera al reactivo con o sin aviso; a 60 min el reactivo no ahorra
+     nada (0.0%) y la IA captura 44.2% sin aviso y 62.7% con aviso perfecto.
+2. **El aviso sigue siendo la variable que más mueve el resultado** (+6,238 a +33,696 min).
+   Con la demanda corregida, un 10% de avisos errados ya tiene un costo pequeño pero
+   significativo en 3 de los 4 horizontes.
 
 ---
 
@@ -2326,16 +2393,13 @@ modelo tenga suficientes ejemplos de eventos disruptivos que aprender.
 ## Mensaje de commit
 
 ```
-fix: retraso por suspension sin filtrar la duracion restante
+docs: resultados con la demanda corregida (seccion 15.7)
 
-- simulador_congestion.py: el retraso de un tramo suspendido es 30*s^2
-  constante mientras dura el incidente (antes s^2*R/2, con R los minutos
-  restantes, que el modelo podia despejar porque s es feature).
-- Reejecutados pipeline principal y 7 variantes x 30 semillas.
-- Resultado (base, sin aviso): la IA captura 87.3 / 75.5 / 63.4 / 40.7% del
-  ahorro posible a 15 / 30 / 45 / 60 min; el reactivo 86.5 / 68.4 / 41.8 /
-  -0.4%. Con aviso perfecto la IA sube a 89.5 / 82.1 / 73.9 / 58.8%
-  (+7,431 a +32,806 min vs. sin aviso, P = 100%).
-- avances.md: seccion 14; limitacion #8 resuelta; resultados de la
-  seccion 13 marcados como reemplazados.
+- Reejecutados pipeline principal y 7 variantes x 30 semillas con los
+  perfiles de estacion derivados de datos y sin perder el 13% de viajes.
+- Resultado (base, sin aviso): la IA captura 86.4 / 75.0 / 62.5 / 44.2% del
+  ahorro posible a 15 / 30 / 45 / 60 min; el reactivo 86.6 / 68.8 / 42.2 /
+  0.0%. Con aviso perfecto la IA sube a 88.2 / 79.9 / 71.3 / 62.7%.
+  Las conclusiones de la seccion 14 se mantienen.
+- avances.md: seccion 15.7; seccion 14.4 marcada como actualizada.
 ```
