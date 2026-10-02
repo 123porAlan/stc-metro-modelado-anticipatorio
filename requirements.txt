@@ -1,0 +1,10 @@
+# Dependencias del pipeline (Python 3.14). Versiones exactas con las que se
+# obtuvieron los resultados de avances.md; scikit-learn fijo también garantiza que
+# modelos/modelo_anticipatorio.pkl se pueda cargar.
+pandas==2.3.3
+numpy==2.4.6
+networkx==3.6.1
+scikit-learn==1.8.0rc1
+joblib==1.5.3
+matplotlib==3.10.8
+seaborn==0.13.2
