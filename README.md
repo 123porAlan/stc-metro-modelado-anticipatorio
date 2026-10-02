@@ -2305,3 +2305,43 @@ Lectura:
    Con la demanda corregida, un 10% de avisos errados ya tiene un costo pequeño pero
    significativo en 3 de los 4 horizontes.
 
+
+---
+
+## 16. Cómo ejecutar el prototipo visual (MVP)
+
+> **Desarrollo experimental.** La interfaz gráfica (`app_interfaz.py`, punto 6.2 del índice
+> tentativo) es un prototipo para demostrar el producto final y se mantiene separada del
+> código base de la tesis: vive **exclusivamente en la rama alterna `feat-interfaz-streamlit`**
+> y no se fusiona con `main`.
+
+La app compara la ruta estática (tiempo ideal, sin tráfico) con la ruta de la IA
+anticipatoria (congestión proyectada por `modelos/modelo_anticipatorio.pkl` sobre
+`grafo_base_metro.gexf`). Permite elegir origen y destino, tipo de día, bloque de 15
+minutos, horizonte de proyección y un evento activo opcional (lluvia, falla mecánica o
+incidente en plataforma).
+
+Pasos, desde la raíz del repositorio:
+
+1. Posicionarse en la rama del prototipo:
+   ```bash
+   git checkout feat-interfaz-streamlit
+   ```
+2. Activar el entorno virtual:
+   ```bash
+   source env/bin/activate
+   ```
+3. Instalar las dependencias si es necesario (incluye `streamlit`):
+   ```bash
+   pip install -r requirements.txt
+   ```
+4. Ejecutar la aplicación:
+   ```bash
+   streamlit run app_interfaz.py
+   ```
+   Se abre en el navegador en `http://localhost:8501`. La primera carga tarda unos
+   segundos mientras se lee el dataset.
+
+**Requisito:** la app usa `datos_procesados/dataset_features_entrenamiento.csv` como lectura
+de la congestión reciente de la red. Ese archivo está en `.gitignore`, así que en un clon
+nuevo hay que generarlo antes con el pipeline de la [Sección 2](#2-pipeline-técnico-actual-orden-de-ejecución).
