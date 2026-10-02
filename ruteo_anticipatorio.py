@@ -140,7 +140,7 @@ else:
 # cruza varios, el más reciente) y su hora_evento (0 = primera hora del evento, 1 = hora
 # + 1, ...), para ver si la ventaja de anticipar se concentra al inicio del evento, cuando
 # menos se sabe si va a seguir, y el tipo de ese evento (lluvia, falla o incidente).
-# - reactivo_duracion: reactivo con una regla de duración (ver avances.md, Sección 11). En
+# - reactivo_duracion: reactivo con una regla de duración (ver README.md, Sección 11). En
 #   los tramos cuyo evento tiene EDAD_IGNORADA bloques o más supone que el evento ya no
 #   sigue y usa el perfil histórico sin evento del tramo en lugar de la congestión observada.
 # - hibrido: la IA, salvo en los tramos con evento de EDAD_IGNORADA bloques o más, donde

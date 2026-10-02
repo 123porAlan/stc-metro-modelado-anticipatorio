@@ -7,7 +7,7 @@ en el set de prueba por semilla), así que una sola corrida no basta para conclu
 sistema de ruteo o qué modelo es mejor. La demanda (matrices O-D) no depende de la
 semilla: solo cambian los eventos.
 
-Desde la Sección 13 de avances.md el pipeline trabaja en bloques de 15 min y el ruteo se
+Desde la Sección 13 de README.md el pipeline trabaja en bloques de 15 min y el ruteo se
 evalúa a 15, 30, 45 y 60 min: todos los agregados se reportan por horizonte.
 """
 import argparse
@@ -26,7 +26,7 @@ SEMILLAS = [42, 7, 13, 101, 2026] + list(range(1001, 1026))
 CORRIDAS_EN_PARALELO = 3
 DIRECTORIO_SALIDA = "datos_procesados/semillas"
 
-# Variantes del experimento (ver avances.md, Sección 7.5). Cada una escribe en
+# Variantes del experimento (ver README.md, Sección 7.5). Cada una escribe en
 # DIRECTORIO_SALIDA/<variante>/semilla_<s>/ para no sobrescribir a las demás.
 # - simulador / entrenador: argumentos extra de cada paso.
 # - dataset_de: variante cuyo dataset se reutiliza (las que solo cambian el modelo no
@@ -36,10 +36,10 @@ VARIANTES = {
     'hgb': {'simulador': [], 'entrenador': ['--configuracion', 'HistGradientBoosting+geo'], 'dataset_de': 'base'},
     'aviso_perfecto': {'simulador': ['--ruido-aviso', '0'], 'entrenador': [], 'dataset_de': None},
     'aviso_ruidoso': {'simulador': ['--ruido-aviso', '0.5'], 'entrenador': [], 'dataset_de': None},
-    # Error aditivo δ ∈ {−1, 0, +1} (ver avances.md, Sección 9): a diferencia del ruido
+    # Error aditivo δ ∈ {−1, 0, +1} (ver README.md, Sección 9): a diferencia del ruido
     # multiplicativo, puede anunciar 0 cuando el incidente sigue.
     'aviso_aditivo': {'simulador': ['--error-aviso-aditivo', '1'], 'entrenador': [], 'dataset_de': None},
-    # Sensibilidad a la probabilidad de error (ver avances.md, Sección 11): el aviso es exacto
+    # Sensibilidad a la probabilidad de error (ver README.md, Sección 11): el aviso es exacto
     # salvo en una fracción p de los casos, donde se equivoca en ±1 bloque (15 min).
     # aviso_aditivo equivale a p = 2/3 y aviso_perfecto a p = 0.
     **{f'aviso_error_{pct}': {'simulador': ['--prob-error-aviso', str(pct / 100)], 'entrenador': [], 'dataset_de': None}

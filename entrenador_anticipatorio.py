@@ -38,7 +38,7 @@ FEATURES_BASE = [
     # persistencia de los incidentes: qué tan probable es que sigan activos en t+k.
     'edad_evento',
 ]
-# Aviso de restablecimiento del simulador (ver avances.md, Sección 7.5), en bloques. Solo
+# Aviso de restablecimiento del simulador (ver README.md, Sección 7.5), en bloques. Solo
 # existe si el dataset se generó con algún argumento de aviso.
 FEATURE_AVISO = 'bloques_restantes_anunciados'
 
@@ -53,7 +53,7 @@ SUAVIZADO_TRAMO = 20
 # para cada uno se entrena con TODOS los días anteriores y se evalúa solo en ese día.
 DIAS_VALIDACION = 5
 
-# Configuración fija del modelo exportado (ver avances.md, Sección 7.1). Con tasas de
+# Configuración fija del modelo exportado (ver README.md, Sección 7.1). Con tasas de
 # eventos calibradas cada semilla deja ~20 filas con evento en la validación por días y
 # elegir por RMSE en esas filas cambió de ganador en 4 de 5 semillas: el criterio era
 # ruido. Se fija la configuración que ganó en el agregado multi-semilla (RMSE global y

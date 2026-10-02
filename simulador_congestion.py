@@ -15,11 +15,11 @@ parser.add_argument("--ruido-aviso", type=float, default=None,
                          "Sin este argumento no se genera la columna bloques_restantes_anunciados.")
 parser.add_argument("--error-aviso-aditivo", type=int, default=None,
                     help="K: suma al aviso un error entero δ uniforme en {-K, ..., K} bloques de 15 min "
-                         "(ver avances.md, Sección 9). Puede anunciar 0 cuando el evento sigue. Se combina "
+                         "(ver README.md, Sección 9). Puede anunciar 0 cuando el evento sigue. Se combina "
                          "con --ruido-aviso (σ = 0 si no se pasa).")
 parser.add_argument("--prob-error-aviso", type=float, default=None,
                     help="p: con probabilidad p el aviso se equivoca en ±1 bloque de 15 min (δ = −1 o +1 con igual "
-                         "probabilidad); si no, es exacto (ver avances.md, Sección 11). No se combina con "
+                         "probabilidad); si no, es exacto (ver README.md, Sección 11). No se combina con "
                          "--error-aviso-aditivo.")
 args = parser.parse_args()
 if args.prob_error_aviso is not None and args.error_aviso_aditivo is not None:
@@ -51,7 +51,7 @@ def funcion_penalizacion_bpr(tiempo_base_min, afluencia_tramo, capacidad_tramo, 
     return min(tiempo_congestivo, tiempo_maximo)
 
 # ====================================================================================
-# RESOLUCIÓN TEMPORAL: BLOQUES DE 15 MINUTOS (limitación #4, ver avances.md)
+# RESOLUCIÓN TEMPORAL: BLOQUES DE 15 MINUTOS (limitación #4, ver README.md)
 # ====================================================================================
 # El snapshot se toma cada bloque de 15 min. La demanda O-D sigue siendo horaria; se
 # reparte en bloques con interpolar_demanda_bloques(). Los bloques se numeran desde 0
@@ -84,7 +84,7 @@ for u, v in G_base.edges():
 # CAPACIDAD POR LÍNEA (reemplaza la constante única de 35,000 pasajeros/hora)
 # ====================================================================================
 # Capacidad por sentido = trenes por hora × carros por tren × pasajeros por carro.
-# Fuentes (ver avances.md, Sección 6.1):
+# Fuentes (ver README.md, Sección 6.1):
 # - Trenes asignados por línea y capacidad por tren: STC, "Parque Vehicular"
 #   (6 carros = 1,020 pasajeros, 9 carros = 1,530 -> 170 por carro).
 # - Carros por tren: trenes de 6 carros neumáticos (29) = Líneas 4 y 6; férreos de
@@ -130,7 +130,7 @@ def capacidad_tramo(u, v):
 # ====================================================================================
 # GENERADOR DE EVENTOS ESTOCÁSTICOS
 # ====================================================================================
-# Tasas calibradas con fuentes públicas (ver avances.md, Sección 6.3). Siguen siendo una
+# Tasas calibradas con fuentes públicas (ver README.md, Sección 6.3). Siguen siendo una
 # aproximación documentada, no una calibración estadística rigurosa.
 TIPOS_EVENTO = ["lluvia", "falla_mecanica", "incidente_plataforma"]
 
@@ -169,7 +169,7 @@ FACTOR_IMPACTO_EVENTO = {
 # cierre y espera en promedio la mitad -> retraso medio = s × MINUTOS_CICLO_CIERRE·s/2 =
 # 30·s² minutos, constante mientras el evento está activo y 0 al terminar. Es la misma
 # magnitud que el modelo horario de las Secciones 7-12.
-# El retraso NO depende de cuánto falta para que termine el evento (ver avances.md,
+# El retraso NO depende de cuánto falta para que termine el evento (ver README.md,
 # Sección 14): con s²·R/2 (Sección 13) el modelo podía despejar R del retraso observado,
 # porque s es una feature, y el aviso de restablecimiento quedaba redundante.
 MINUTOS_CICLO_CIERRE = 60
@@ -304,7 +304,7 @@ def bloques_restantes_de(evento, bloque):
 
 def bloques_restantes_anunciados(evento, bloque):
     """
-    Aviso de tiempo estimado de restablecimiento (ver avances.md, Sección 7.5). El STC lo
+    Aviso de tiempo estimado de restablecimiento (ver README.md, Sección 7.5). El STC lo
     publica para incidentes y fallas; la lluvia no lo trae (-1). Restante real = bloques
     completos que el evento seguirá activo después de este (0 = termina al cerrar el bloque).
     El ruido multiplicativo (log-normal) nunca se equivoca con un evento que termina en este

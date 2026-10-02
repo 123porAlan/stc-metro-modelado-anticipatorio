@@ -19,7 +19,7 @@ def limpiar_texto(texto):
 
 # Nombres del CSV que no coinciden con los del grafo GTFS (grafo_base_metro.gexf). Sin
 # este mapeo el simulador no encuentra el nodo de esas estaciones y descarta en silencio
-# todos sus viajes (ver avances.md, Sección 15).
+# todos sus viajes (ver README.md, Sección 15).
 ALIAS_ESTACIONES = {
     "Chapultepec": "Chapultepec ",
     "Etiopía/Plaza de la Transparencia": "Etiopía y Plaza de la Transparencia",
@@ -113,7 +113,7 @@ perfil_fin_semana = derivar_perfil_fin_semana(perfil_laboral)
 perfiles_horarios = pd.concat([perfil_laboral, perfil_fin_semana], ignore_index=True)
 
 # ====================================================================================
-# PERFILES DE ESTACIÓN DERIVADOS DE DATOS (limitación #5, ver avances.md, Sección 15)
+# PERFILES DE ESTACIÓN DERIVADOS DE DATOS (limitación #5, ver README.md, Sección 15)
 # ====================================================================================
 # El CSV de afluencia solo trae ENTRADAS DIARIAS por estación (sin hora ni salidas), así
 # que no puede decir directamente si una estación es origen o destino. Cada estación se
