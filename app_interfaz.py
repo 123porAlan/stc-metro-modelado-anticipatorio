@@ -186,14 +186,14 @@ def mostrar_ruta(titulo, G, ruta, peso, tiempo_proyectado, delta=None):
 # ==========================================
 # Interfaz
 # ==========================================
-st.set_page_config(page_title="Ruteo anticipatorio · STC Metro", page_icon="🚇", layout="wide")
+st.set_page_config(page_title="Ruteo anticipatorio · STC Metro", layout="wide")
 st.markdown(ESTILOS, unsafe_allow_html=True)
 
 G_base = cargar_grafo()
 paquete = cargar_modelo()
 df_contexto = cargar_contexto()
 
-st.title("🚇 Ruteo anticipatorio · STC Metro")
+st.title("Ruteo anticipatorio · STC Metro")
 st.caption(f"Compara la ruta más corta sin tráfico con la que elige la IA a partir de la congestión que "
            f"proyecta para la red. Modelo: {paquete['nombre_modelo']}.")
 
