@@ -235,6 +235,21 @@ largos conocidos (p. ej. Ciudad Azteca, La Raza, Tacubaya).
    del estado actual. Eso vuelve redundante el aviso de restablecimiento y hace que parte
    de la ventaja de la IA a 30–60 min se deba a la construcción del simulador. Hay que
    corregirlo antes de citar esos resultados.
+9. **[2026-10-06] Lluvia restringida a las Líneas A, B y 12, y aplicada a la línea
+   completa** (`LINEAS_SUPERFICIE` en `simulador_congestion.py` y `app_interfaz.py`):
+   solo esas tres líneas pueden recibir lluvia. Se eligieron como simplificación, por
+   ser las de trazado de superficie o elevado más extenso y evidente (la A va en
+   superficie; la B y la 12 tienen largos tramos elevados o en superficie), pero la
+   selección no se basa en una fuente ni en una revisión tramo por tramo de la red. Esto
+   deja fuera otras líneas con tramos expuestos, por ejemplo la Línea 9 (viaducto
+   elevado de Jamaica a Pantitlán), la Línea 4 (casi toda elevada) y la Línea 2 (en
+   superficie de Xola a Tasqueña), entre otras; estos trazados están por confirmar con
+   las fichas técnicas del STC. Además, la lluvia marca como afectados todos los tramos
+   de la línea, incluidos los subterráneos (por ejemplo, el tramo subterráneo de la
+   Línea 12). Lo correcto sería clasificar cada tramo como subterráneo o expuesto y
+   aplicar la lluvia solo a los expuestos. Corregirlo implica cambiar el simulador y la
+   interfaz, regenerar los datos y reentrenar el modelo, que hoy nunca ha visto lluvia
+   fuera de A, B y 12.
 
 Ninguno de estos puntos invalida el trabajo — son exactamente el tipo de simplificación
 esperable en una primera iteración de prototipo — pero deben documentarse como alcance y
